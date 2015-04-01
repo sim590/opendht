@@ -21,6 +21,9 @@ case "${host_os}" in
   linux*)
     SYS=linux
     ;;
+  android*)
+    SYS=android
+    ;;
   darwin*)
     SYS=darwin
     ;;
@@ -39,6 +42,10 @@ case "${host_os}" in
     SYS="${host_os}"
     ;;
 esac
+
+AS_IF([test "x$SYS" = "xandroid"],
+      [CXXFLAGS="${CXXFLAGS} -g -Wno-return-type -Wall -Wextra -Wnon-virtual-dtor -O0"],
+      [CXXFLAGS="${CXXFLAGS} -O3"])
 
 LT_INIT()
 LT_LANG(C++)
