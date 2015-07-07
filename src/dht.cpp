@@ -1221,6 +1221,16 @@ Dht::Search::getNextStepTime(const std::map<ValueType::Id, ValueType>& types, ti
     return next_step;
 }
 
+time_point
+Dht::getNextStorageMaintenanceTime() {
+    time_point tp {time_point::max()};
+
+    for (auto& str : store) {
+        tp = std::min(tp, str.last_maintenance_time + MAX_STORAGE_MAINTENANCE_TIME);
+    }
+    return tp;
+}
+
 void
 Dht::bootstrapSearch(Dht::Search& sr)
 {
