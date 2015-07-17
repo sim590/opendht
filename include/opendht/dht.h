@@ -655,6 +655,7 @@ private:
 
     struct Storage {
         InfoHash id;
+        bool want4 {true}, want6 {true};
         time_point last_maintenance_time;
         std::vector<ValueStorage> values {};
         std::vector<Listener> listeners {};
