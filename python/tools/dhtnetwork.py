@@ -2,7 +2,8 @@
 # Copyright (C) 2015 Savoir-Faire Linux Inc.
 # Author: Adrien Béraud <adrien.beraud@savoirfairelinux.com>
 
-import signal, os, sys, ipaddress, random
+import signal, os, sys, ipaddress, random, time
+from queue import Queue, Empty
 from pyroute2 import IPDB
 
 sys.path.append('..')
@@ -71,11 +72,20 @@ class DhtNetwork(object):
         self.port += 1
         return n
 
-    def end_node(self):
+    def end_node(self, id=None):
         if not self.nodes:
             return
-        n = self.nodes.pop()
-        n[1].join()
+        if id is not None:
+            for n in self.nodes:
+                if n[1].getId() == id:
+                    n[1].join()
+                    self.nodes.remove(n)
+                    return True
+            return False
+        else:
+            n = self.nodes.pop()
+            n[1].join()
+            return True
 
     def replace_node(self):
         random.shuffle(self.nodes)
@@ -103,8 +113,25 @@ if __name__ == '__main__':
     lock = threading.Condition()
     quit = False
 
+    def listen_to_mother_nature(stdin, q):
+        global quit
+
+        def parse_req(req):
+            split_req = req.split(' ')
+
+            op = split_req[0]
+            hashes = [this_hash.encode() for this_hash in split_req[1:]]
+
+            return (op, hashes)
+
+        while not quit:
+            req = stdin.readline()
+            parsed_req = parse_req(req)
+            q.put(parsed_req)
+
     def handler(signum, frame):
         global quit
+
         with lock:
             quit = True
             lock.notify()
@@ -133,9 +160,31 @@ if __name__ == '__main__':
         net = DhtNetwork(iface=args.iface, port=args.port, bootstrap=bs)
         net.resize(args.node_num)
 
+        BENCHMARK_FIFO = 'bm_fifo'
+        q = Queue()
+        t = threading.Thread(target=listen_to_mother_nature, args=(sys.stdin, q))
+        t.start()
+
         with lock:
             while not quit:
-                lock.wait()
+                lock.wait(timeout=5.0)
+                try:
+                    new_req = q.get_nowait()
+                except Empty:
+                    pass
+                else:
+                    DEL_REQ = 'del'
+                    if new_req[0] == DEL_REQ:
+                        print('got delete request.')
+                        for n in new_req[1]:
+                            did_delete = net.end_node(id=n)
+                            if did_delete:
+                                print('Node %s deleted.' % n)
+                            else:
+                                print('Node not found.')
+                    with open(BENCHMARK_FIFO, 'w') as fifo:
+                        fifo.write('notifiy')
+            t.join()
     except Exception as e:
         pass
     finally:

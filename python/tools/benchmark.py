@@ -2,7 +2,7 @@
 # Copyright (C) 2015 Savoir-Faire Linux Inc.
 # Author: Adrien Béraud <adrien.beraud@savoirfairelinux.com>
 
-import sys, subprocess, argparse, time, random, string, threading, signal
+import os, sys, subprocess, argparse, time, random, string, threading, queue, signal
 from pyroute2.netns.process.proxy import NSPopen
 import numpy as np
 import matplotlib.pyplot as plt
@@ -40,6 +40,131 @@ def replace_cluster():
     stop_cluster(n)
     start_cluster(n)
 
+#TODO: Test this
+def dataPersistenceTest():
+    """TODO: Docstring for dataPersistenceTest.
+
+    """
+    DEL_REQ = b"del"
+    BENCHMARK_FIFO = 'bm_fifo'
+
+    fifo_lock = threading.Condition()
+    lock      = threading.Condition()
+    done      = 0
+
+    foreign_nodes = []
+    foreign_values = []
+
+    def benchmark_notify():
+        nonlocal BENCHMARK_FIFO, fifo_lock
+
+        with open(BENCHMARK_FIFO, 'r') as fifo:
+            for line in iter(fifo.readline, b''):
+                if not line:
+                    time.sleep(sleep_time)
+                    if sleep_time < 1.0:
+                        sleep_time += 0.00001
+                    continue
+                sleep_time = 0.00001
+                with fifo_lock:
+                    fifo_lock.notify()
+
+    def getcb(value):
+        nonlocal foreign_values
+        print('[GET]: %s' % value)
+        foreign_values.append(value)
+
+    def putDoneCb(ok, nodes):
+        nonlocal lock, done
+        with lock:
+            done -= 1
+            lock.notify()
+
+    def getDoneCb(ok, nodes):
+        nonlocal lock, done, foreign_nodes
+        with lock:
+            if not ok:
+                print("[GET]: failed !")
+            else:
+                for node in nodes:
+                    foreign_nodes.append(node.getId())
+                print('[GET] hosts nodes: %s ' % nodes)
+            done -= 1
+            lock.notify()
+
+    t = threading.Thread(target=benchmark_notify)
+
+    try:
+        try:
+            os.mkfifo(BENCHMARK_FIFO)
+        except Exception:
+            pass
+        t.start()
+
+        myhash = random_hash()
+        #localvalues = [PyValue(b'foo'), PyValue(b'bar'), PyValue(b'foobar')]
+        localvalues = [PyValue(b'foo')]
+        successfullTransfer = lambda lv,fv: len(lv) == len(fv)
+
+        for val in localvalues:
+            with lock:
+                print('[PUT]: %s' % val)
+                done += 1
+                bootstrap.front().put(myhash, val, putDoneCb)
+                while done > 0:
+                    lock.wait()
+
+        print('Waiting 10 seconds for the network to do its thing...')
+        time.sleep(10)
+
+        # checking if values were transfered.
+        with lock:
+            done += 1
+            bootstrap.front().get(myhash, getcb, getDoneCb)
+            while done > 0:
+                lock.wait()
+
+        if not successfullTransfer(localvalues, foreign_values):
+            print('[GET]: Only %s on %s values successfully put.' %
+                    (len(foreign_values), len(localvalues)))
+        if foreign_values and foreign_nodes:
+            print('Removing all nodes hosting target values...')
+            serialized_req = DEL_REQ + b" " + b" ".join(map(bytes, foreign_nodes))
+            for proc in procs:
+                with fifo_lock:
+                    print('[REMOVE]: sending (req: "%s") to %s' %
+                            (serialized_req, proc))
+                    print(proc.stdin)
+                    proc.stdin.write(serialized_req + b'\n')
+                    proc.stdin.flush()
+                    #counting on fifo to wake up.
+                    print('[benchmark] going to wait()')
+                    fifo_lock.wait()
+                    print('[benchmark]: got notify')
+
+
+            # checking if values were transfered to new nodes
+            foreign_values = []
+            with lock:
+                print('[GET]: trying to fetch persistant values')
+                done += 1
+                bootstrap.front().get(myhash, getcb, getDoneCb)
+                while done > 0:
+                    lock.wait()
+
+            if not successfullTransfer(localvalues, foreign_values):
+                print('[GET]: Only %s on %s values persisted.' %
+                        (len(foreign_values), len(localvalues)))
+            else:
+                print('[GET]: All values successfully persisted.')
+        else:
+            print("[GET]: either couldn't fetch values or nodes hosting values...")
+
+    except Exception as e:
+        print(e)
+    finally:
+        os.remove(BENCHMARK_FIFO)
+
 def getsTimesTest():
     """TODO: Docstring for
 
@@ -56,9 +181,9 @@ def getsTimesTest():
 
     start = time.time()
     times = []
-    done = 0
 
     lock = threading.Condition()
+    done = 0
 
     def getcb(v):
         print("found", v)
@@ -118,10 +243,11 @@ if __name__ == '__main__':
     parser.add_argument('-no4', '--disable-ipv4', help='Enable IPv4', action="store_true")
     parser.add_argument('-no6', '--disable-ipv6', help='Enable IPv6', action="store_true")
     parser.add_argument('--gets', action='store_true', help='Launches get calls timings benchmark test.', default=0)
+    parser.add_argument('--data-persistence', action='store_true', help='Launches data persistence benchmark test.', default=0)
 
     args = parser.parse_args()
 
-    if args.gets < 1:
+    if args.data_persistence + args.gets < 1:
         print('No test specified... Quitting.', file=sys.stderr)
         sys.exit(1)
 
@@ -152,6 +278,8 @@ if __name__ == '__main__':
 
         if args.gets:
             getsTimesTest()
+        elif args.data_persistence:
+            dataPersistenceTest()
 
     except Exception as e:
         print(e)
