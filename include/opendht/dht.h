@@ -231,6 +231,13 @@ public:
 
     int pingNode(const sockaddr*, socklen_t);
 
+    /**
+     * Maintains the store. For each storage, if values don't belong there
+     * anymore because this node is too far from the target, values are sent to
+     * the appropriate nodes.
+     */
+    void maintainStore(bool force=false);
+
     time_point periodic(const uint8_t *buf, size_t buflen, const sockaddr *from, socklen_t fromlen);
 
     /**

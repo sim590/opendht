@@ -122,6 +122,9 @@ void
 DhtRunner::join()
 {
     running = false;
+
+    dht_->maintainStore(true);
+
     cv.notify_all();
     if (dht_thread.joinable())
         dht_thread.join();

@@ -2222,6 +2222,16 @@ Dht::bucketMaintenance(RoutingTable& list)
 }
 
 void
+Dht::maintainStore(bool force) {
+    for (auto &str : store) {
+        if (force) { maintainStorage(str.id); }
+        else if (now > str.last_maintenance_time + MAX_STORAGE_MAINTENANCE_EXPIRE_TIME) {
+            maintainStorage(str.id);
+        }
+    }
+}
+
+void
 Dht::maintainStorage(InfoHash id) {
     auto *local_storage = findStorage(id);
     if (!local_storage) { return; }
@@ -2654,11 +2664,7 @@ Dht::periodic(const uint8_t *buf, size_t buflen,
     }
 
     //data persistence
-    for (auto &str : store) {
-        if (now > str.last_maintenance_time + MAX_STORAGE_MAINTENANCE_EXPIRE_TIME) {
-            maintainStorage(str.id);
-        }
-    }
+    maintainStore();
 
     return std::min(confirm_nodes_time, search_time);
 }
