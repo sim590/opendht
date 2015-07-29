@@ -74,8 +74,7 @@ def dataPersistenceTest():
                 bootstrap.log("[GET]: failed !")
             else:
                 for node in nodes:
-                    foreign_nodes.append(node.getId())
-                bootstrap.log('[GET] hosts nodes: %s ' % nodes)
+                    foreign_nodes.append(node.getId().toString())
             done -= 1
             lock.notify()
 
@@ -85,11 +84,10 @@ def dataPersistenceTest():
         producer = bootstrap.get(2)
 
         myhash = random_hash()
-        #localvalues = [PyValue(b'foo'), PyValue(b'bar'), PyValue(b'foobar')]
-        localvalues = [PyValue(b'foo')]
+        local_values = [PyValue(b'foo'), PyValue(b'bar'), PyValue(b'foobar')]
         successfullTransfer = lambda lv,fv: len(lv) == len(fv)
 
-        for val in localvalues:
+        for val in local_values:
             with lock:
                 bootstrap.log('[PUT]: %s' % val)
                 done += 1
@@ -104,10 +102,10 @@ def dataPersistenceTest():
             while done > 0:
                 lock.wait()
 
-        if not successfullTransfer(localvalues, foreign_values):
+        if not successfullTransfer(local_values, foreign_values):
             bootstrap.log('[GET]: Only ', len(foreign_values) ,' on ', 
-                    len(localvalues), ' values successfully put.')
-        if foreign_values:
+                    len(local_values), ' values successfully put.')
+        if foreign_values and foreign_nodes:
             bootstrap.log('Removing all nodes hosting target values...')
             serialized_req = DEL_REQ + b" " + b" ".join(map(bytes, foreign_nodes))
             for proc in procs:
@@ -116,7 +114,7 @@ def dataPersistenceTest():
                 proc.stdin.write(serialized_req + b'\n')
                 proc.stdin.flush()
                 #waiting process notification on finish
-                os.read(proc.stdout.fileno(), 1)
+                proc.stdout.readline()
 
 
             # checking if values were transfered to new nodes
@@ -128,9 +126,9 @@ def dataPersistenceTest():
                 while done > 0:
                     lock.wait()
 
-            if not successfullTransfer(localvalues, foreign_values):
+            if not successfullTransfer(local_values, foreign_values):
                 bootstrap.log('[GET]: Only %s on %s values persisted.' %
-                        (len(foreign_values), len(localvalues)))
+                        (len(foreign_values), len(local_values)))
             else:
                 bootstrap.log('[GET]: All values successfully persisted.')
         else:

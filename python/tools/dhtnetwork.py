@@ -83,8 +83,10 @@ class DhtNetwork(object):
         if not self.nodes:
             return
         if id is not None:
+            DhtNetwork.log('Searching for : ', id)
             for n in self.nodes:
-                if n[1].getId() == id:
+                DhtNetwork.log(n[1].getNodeId())
+                if n[1].getNodeId() == id:
                     n[1].join()
                     self.nodes.remove(n)
                     return True
@@ -120,6 +122,10 @@ if __name__ == '__main__':
     lock = threading.Condition()
     quit = False
 
+    def notify_benchmark():
+        sys.stdout.write('notify\n')
+        sys.stdout.flush()
+
     def listen_to_mother_nature(stdin, q):
         global quit
 
@@ -127,7 +133,7 @@ if __name__ == '__main__':
             split_req = req.split(' ')
 
             op = split_req[0]
-            hashes = [this_hash.encode() for this_hash in split_req[1:]]
+            hashes = [this_hash.replace('\n', '').encode() for this_hash in split_req[1:]]
 
             return (op, hashes)
 
@@ -182,13 +188,15 @@ if __name__ == '__main__':
                     DEL_REQ = 'del'
                     if new_req[0] == DEL_REQ:
                         DhtNetwork.log('got delete request.')
+                        did_delete = 0
                         for n in new_req[1]:
-                            did_delete = net.end_node(id=n)
-                            if did_delete:
-                                DhtNetwork.log('Node %s deleted.' % n)
-                            else:
-                                DhtNetwork.log('Node not found.')
-                    DhtNetwork.notify_benchmark()
+                            did_delete += net.end_node(id=n)
+                        if did_delete:
+                            DhtNetwork.log('Node(s) deleted.')
+                        else:
+                            DhtNetwork.log('Node(s) not found.')
+
+                    notify_benchmark()
             t.join()
     except Exception as e:
         DhtNetwork.log(e)
