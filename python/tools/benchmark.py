@@ -59,6 +59,7 @@ def dataPersistenceTest():
         nonlocal foreign_values
         bootstrap.log('[GET]: %s' % value)
         foreign_values.append(value)
+        return True
 
     def putDoneCb(ok, nodes):
         nonlocal lock, done
