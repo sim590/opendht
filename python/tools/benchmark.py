@@ -15,7 +15,7 @@ def random_hash():
     return PyInfoHash(''.join(random.SystemRandom().choice(string.hexdigits) for _ in range(40)).encode())
 
 def start_cluster(i):
-    global procs
+    global procs, bootstrap
     cmd = ["python3", "dhtnetwork.py", "-n", str(node_per_loc), '-I', args.ifname+str(i)+'.1']
     if not args.disable_ipv4 and bootstrap.ip4:
         cmd.extend(['-b', bootstrap.ip4])
@@ -45,17 +45,19 @@ def dataPersistenceTest():
     """TODO: Docstring for dataPersistenceTest.
 
     """
+    global procs, bootstrap
+
     DEL_REQ = b"del"
 
-    lock      = threading.Condition()
-    done      = 0
+    lock = threading.Condition()
+    done = 0
 
     foreign_nodes = []
     foreign_values = []
 
     def getcb(value):
         nonlocal foreign_values
-        print('[GET]: %s' % value)
+        bootstrap.log('[GET]: %s' % value)
         foreign_values.append(value)
 
     def putDoneCb(ok, nodes):
@@ -68,11 +70,11 @@ def dataPersistenceTest():
         nonlocal lock, done, foreign_nodes
         with lock:
             if not ok:
-                print("[GET]: failed !")
+                bootstrap.log("[GET]: failed !")
             else:
                 for node in nodes:
                     foreign_nodes.append(node.getId())
-                print('[GET] hosts nodes: %s ' % nodes)
+                bootstrap.log('[GET] hosts nodes: %s ' % nodes)
             done -= 1
             lock.notify()
 
@@ -88,7 +90,7 @@ def dataPersistenceTest():
 
         for val in localvalues:
             with lock:
-                print('[PUT]: %s' % val)
+                bootstrap.log('[PUT]: %s' % val)
                 done += 1
                 producer.put(myhash, val, putDoneCb)
                 while done > 0:
@@ -102,13 +104,13 @@ def dataPersistenceTest():
                 lock.wait()
 
         if not successfullTransfer(localvalues, foreign_values):
-            print('[GET]: Only ', len(foreign_values) ,' on ', 
+            bootstrap.log('[GET]: Only ', len(foreign_values) ,' on ', 
                     len(localvalues), ' values successfully put.')
         if foreign_values:
-            print('Removing all nodes hosting target values...')
+            bootstrap.log('Removing all nodes hosting target values...')
             serialized_req = DEL_REQ + b" " + b" ".join(map(bytes, foreign_nodes))
             for proc in procs:
-                print('[REMOVE]: sending (req: "', serialized_req, '") ',
+                bootstrap.log('[REMOVE]: sending (req: "', serialized_req, '") ',
                         'to ', proc)
                 proc.stdin.write(serialized_req + b'\n')
                 proc.stdin.flush()
@@ -119,19 +121,19 @@ def dataPersistenceTest():
             # checking if values were transfered to new nodes
             foreign_values = []
             with lock:
-                print('[GET]: trying to fetch persistant values')
+                bootstrap.log('[GET]: trying to fetch persistant values')
                 done += 1
                 consumer.get(myhash, getcb, getDoneCb)
                 while done > 0:
                     lock.wait()
 
             if not successfullTransfer(localvalues, foreign_values):
-                print('[GET]: Only %s on %s values persisted.' %
+                bootstrap.log('[GET]: Only %s on %s values persisted.' %
                         (len(foreign_values), len(localvalues)))
             else:
-                print('[GET]: All values successfully persisted.')
+                bootstrap.log('[GET]: All values successfully persisted.')
         else:
-            print("[GET]: either couldn't fetch values or nodes hosting values...")
+            bootstrap.log("[GET]: either couldn't fetch values or nodes hosting values...")
 
     except Exception as e:
         print(e)
@@ -142,6 +144,7 @@ def getsTimesTest():
     """TODO: Docstring for
 
     """
+    global bootstrap
 
     plt.ion()
 
@@ -159,14 +162,16 @@ def getsTimesTest():
     done = 0
 
     def getcb(v):
-        print("found", v)
+        global bootstrap
+        bootstrap.log("found", v)
 
     def donecb(ok, nodes):
+        global bootstrap
         nonlocal lock, done, times
         t = time.time()-start
         with lock:
             if not ok:
-                print("failed !")
+                bootstrap.log("failed !")
             times.append(t)
             done -= 1
             lock.notify()
@@ -189,7 +194,7 @@ def getsTimesTest():
     for n in range(10):
         #replace_cluster()
         plt.pause(2)
-        print("Getting 50 random hashes succesively.")
+        bootstrap.log("Getting 50 random hashes succesively.")
         for i in range(50):
             with lock:
                 done += 1

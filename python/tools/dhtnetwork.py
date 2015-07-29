@@ -19,13 +19,6 @@ class DhtNetwork(object):
         print('%s[DhtNetwork-%s]%s' % (BOLD, DhtNetwork.iface, NORMAL), ':' , *to_print, file=sys.stderr)
 
     @staticmethod
-    def notify_benchmark():
-        DhtNetwork.log('entering notification method')
-        with sys.stdout as stdout:
-            sys.stdout.write('notify')
-        #sys.stdout.flush()
-
-    @staticmethod
     def run_node(ip4, ip6, p, bootstrap=[]):
         #print("run_node", ip4, ip6, p, bootstrap)
         id = PyIdentity()
@@ -145,7 +138,6 @@ if __name__ == '__main__':
 
     def handler(signum, frame):
         global quit
-
         with lock:
             quit = True
             lock.notify()
@@ -199,7 +191,7 @@ if __name__ == '__main__':
                     DhtNetwork.notify_benchmark()
             t.join()
     except Exception as e:
-        pass
+        DhtNetwork.log(e)
     finally:
         if net:
             net.resize(0)
