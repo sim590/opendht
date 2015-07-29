@@ -2,7 +2,7 @@
 # Copyright (C) 2015 Savoir-Faire Linux Inc.
 # Author: Adrien Béraud <adrien.beraud@savoirfairelinux.com>
 
-import signal, os, sys, ipaddress, random, time
+import signal, sys, ipaddress, random, time
 from queue import Queue, Empty
 from pyroute2 import IPDB
 
@@ -11,6 +11,19 @@ from opendht import *
 
 class DhtNetwork(object):
     nodes = []
+
+    @staticmethod
+    def log(*to_print):
+        BOLD   = "\033[1m"
+        NORMAL = "\033[0m"
+        print('%s[DhtNetwork-%s]%s' % (BOLD, DhtNetwork.iface, NORMAL), ':' , *to_print, file=sys.stderr)
+
+    @staticmethod
+    def notify_benchmark():
+        DhtNetwork.log('entering notification method')
+        with sys.stdout as stdout:
+            sys.stdout.write('notify')
+        #sys.stdout.flush()
 
     @staticmethod
     def run_node(ip4, ip6, p, bootstrap=[]):
@@ -48,6 +61,7 @@ class DhtNetwork(object):
         return (if_ip4, if_ip6)
 
     def __init__(self, iface=None, ip4=None, ip6=None, port=4000, bootstrap=[]):
+        DhtNetwork.iface = iface
         self.port = port
         ips = DhtNetwork.find_ip(iface)
         self.ip4 = ip4 if ip4 else ips[0]
@@ -67,7 +81,7 @@ class DhtNetwork(object):
         n = DhtNetwork.run_node(self.ip4, self.ip6, self.port, self.bootstrap)
         self.nodes.append(n)
         if not self.bootstrap:
-            print("Using fallback bootstrap", self.ip4, self.port)
+            DhtNetwork.log("Using fallback bootstrap", self.ip4, self.port)
             self.bootstrap = [(self.ip4, str(self.port))]
         self.port += 1
         return n
@@ -98,11 +112,11 @@ class DhtNetwork(object):
         if n == l:
             return
         if n > l:
-            print("Launching", n-l, "nodes")
+            DhtNetwork.log("Launching", n-l, "nodes")
             for i in range(l, n):
                 self.launch_node()
         else:
-            print("Ending", l-n, "nodes")
+            DhtNetwork.log("Ending", l-n, "nodes")
             #random.shuffle(self.nodes)
             for i in range(n, l):
                 self.end_node()
@@ -160,14 +174,14 @@ if __name__ == '__main__':
         net = DhtNetwork(iface=args.iface, port=args.port, bootstrap=bs)
         net.resize(args.node_num)
 
-        BENCHMARK_FIFO = 'bm_fifo'
         q = Queue()
         t = threading.Thread(target=listen_to_mother_nature, args=(sys.stdin, q))
+        t.daemon = True
         t.start()
 
         with lock:
             while not quit:
-                lock.wait(timeout=5.0)
+                lock.wait(timeout=1.0)
                 try:
                     new_req = q.get_nowait()
                 except Empty:
@@ -175,15 +189,14 @@ if __name__ == '__main__':
                 else:
                     DEL_REQ = 'del'
                     if new_req[0] == DEL_REQ:
-                        print('got delete request.')
+                        DhtNetwork.log('got delete request.')
                         for n in new_req[1]:
                             did_delete = net.end_node(id=n)
                             if did_delete:
-                                print('Node %s deleted.' % n)
+                                DhtNetwork.log('Node %s deleted.' % n)
                             else:
-                                print('Node not found.')
-                    with open(BENCHMARK_FIFO, 'w') as fifo:
-                        fifo.write('notifiy')
+                                DhtNetwork.log('Node not found.')
+                    DhtNetwork.notify_benchmark()
             t.join()
     except Exception as e:
         pass

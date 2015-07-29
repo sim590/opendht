@@ -21,7 +21,7 @@ def start_cluster(i):
         cmd.extend(['-b', bootstrap.ip4])
     if not args.disable_ipv6 and bootstrap.ip6:
         cmd.extend(['-b6', bootstrap.ip6])
-    procs[i] = NSPopen('node'+str(i), cmd)
+    procs[i] = NSPopen('node'+str(i), cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     plt.pause(2)
 
 def stop_cluster(i):
@@ -46,28 +46,12 @@ def dataPersistenceTest():
 
     """
     DEL_REQ = b"del"
-    BENCHMARK_FIFO = 'bm_fifo'
 
-    fifo_lock = threading.Condition()
     lock      = threading.Condition()
     done      = 0
 
     foreign_nodes = []
     foreign_values = []
-
-    def benchmark_notify():
-        nonlocal BENCHMARK_FIFO, fifo_lock
-
-        with open(BENCHMARK_FIFO, 'r') as fifo:
-            for line in iter(fifo.readline, b''):
-                if not line:
-                    time.sleep(sleep_time)
-                    if sleep_time < 1.0:
-                        sleep_time += 0.00001
-                    continue
-                sleep_time = 0.00001
-                with fifo_lock:
-                    fifo_lock.notify()
 
     def getcb(value):
         nonlocal foreign_values
@@ -92,14 +76,10 @@ def dataPersistenceTest():
             done -= 1
             lock.notify()
 
-    t = threading.Thread(target=benchmark_notify)
-
     try:
-        try:
-            os.mkfifo(BENCHMARK_FIFO)
-        except Exception:
-            pass
-        t.start()
+        bootstrap.resize(3)
+        consumer = bootstrap.get(1)
+        producer = bootstrap.get(2)
 
         myhash = random_hash()
         #localvalues = [PyValue(b'foo'), PyValue(b'bar'), PyValue(b'foobar')]
@@ -110,37 +90,30 @@ def dataPersistenceTest():
             with lock:
                 print('[PUT]: %s' % val)
                 done += 1
-                bootstrap.front().put(myhash, val, putDoneCb)
+                producer.put(myhash, val, putDoneCb)
                 while done > 0:
                     lock.wait()
-
-        print('Waiting 10 seconds for the network to do its thing...')
-        time.sleep(10)
 
         # checking if values were transfered.
         with lock:
             done += 1
-            bootstrap.front().get(myhash, getcb, getDoneCb)
+            consumer.get(myhash, getcb, getDoneCb)
             while done > 0:
                 lock.wait()
 
         if not successfullTransfer(localvalues, foreign_values):
-            print('[GET]: Only %s on %s values successfully put.' %
-                    (len(foreign_values), len(localvalues)))
-        if foreign_values and foreign_nodes:
+            print('[GET]: Only ', len(foreign_values) ,' on ', 
+                    len(localvalues), ' values successfully put.')
+        if foreign_values:
             print('Removing all nodes hosting target values...')
             serialized_req = DEL_REQ + b" " + b" ".join(map(bytes, foreign_nodes))
             for proc in procs:
-                with fifo_lock:
-                    print('[REMOVE]: sending (req: "%s") to %s' %
-                            (serialized_req, proc))
-                    print(proc.stdin)
-                    proc.stdin.write(serialized_req + b'\n')
-                    proc.stdin.flush()
-                    #counting on fifo to wake up.
-                    print('[benchmark] going to wait()')
-                    fifo_lock.wait()
-                    print('[benchmark]: got notify')
+                print('[REMOVE]: sending (req: "', serialized_req, '") ',
+                        'to ', proc)
+                proc.stdin.write(serialized_req + b'\n')
+                proc.stdin.flush()
+                #waiting process notification on finish
+                os.read(proc.stdout.fileno(), 1)
 
 
             # checking if values were transfered to new nodes
@@ -148,7 +121,7 @@ def dataPersistenceTest():
             with lock:
                 print('[GET]: trying to fetch persistant values')
                 done += 1
-                bootstrap.front().get(myhash, getcb, getDoneCb)
+                consumer.get(myhash, getcb, getDoneCb)
                 while done > 0:
                     lock.wait()
 
@@ -163,7 +136,7 @@ def dataPersistenceTest():
     except Exception as e:
         print(e)
     finally:
-        os.remove(BENCHMARK_FIFO)
+        bootstrap.resize(1)
 
 def getsTimesTest():
     """TODO: Docstring for
