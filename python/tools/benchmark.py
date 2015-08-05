@@ -105,7 +105,7 @@ class DhtNetworkSubProcess(NSPopen):
 
     def __init__(self, ns, cmd, quit=False, **kwargs):
         super(DhtNetworkSubProcess, self).__init__(ns, cmd, **kwargs)
-        self.setStdoutFlags()
+        self._setStdoutFlags()
 
         self._quit = quit
         self._lock = threading.Condition()
@@ -113,11 +113,11 @@ class DhtNetworkSubProcess(NSPopen):
         self._out_queue = queue.Queue()
 
         # starting thread
-        self._thread = threading.Thread(target=self.communicate)
+        self._thread = threading.Thread(target=self._communicate)
         self._thread.daemon = True
         self._thread.start()
 
-    def setStdoutFlags(self):
+    def _setStdoutFlags(self):
         """
         Sets non-blocking read flags for subprocess stdout file descriptor.
         """
@@ -125,7 +125,7 @@ class DhtNetworkSubProcess(NSPopen):
         flags = self.stdout.fcntl(fcntl.F_GETFL)
         self.stdout.fcntl(fcntl.F_SETFL, flags | os.O_NDELAY)
 
-    def communicate(self):
+    def _communicate(self):
         """
         Communication thread. This reads and writes to the sub process.
         """
@@ -267,11 +267,12 @@ def dataPersistenceTest():
         if not successfullTransfer(local_values, foreign_values):
             bootstrap.log('[GET]: Only ', len(foreign_values) ,' on ',
                     len(local_values), ' values successfully put.')
-        else:
+
+        if foreign_values and foreign_nodes:
             bootstrap.log('Values are found on :')
             for node in foreign_nodes:
                 bootstrap.log(node)
-        if foreign_values and foreign_nodes:
+
             bootstrap.log('Removing all nodes hosting target values...')
             serialized_req = DEL_REQ + b' ' + b' '.join(map(bytes, foreign_nodes))
             for proc in procs:
