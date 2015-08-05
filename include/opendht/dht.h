@@ -133,6 +133,7 @@ public:
 
     typedef std::function<bool(const std::vector<std::shared_ptr<Value>>& values)> GetCallback;
     typedef std::function<bool(std::shared_ptr<Value> value)> GetCallbackSimple;
+    typedef std::function<void()> ShutdownCallback;
 
     typedef bool (*GetCallbackRaw)(std::shared_ptr<Value>, void *user_data);
 
@@ -156,9 +157,14 @@ public:
 
     typedef std::function<void(bool success, const std::vector<std::shared_ptr<Node>>& nodes)> DoneCallback;
     typedef void (*DoneCallbackRaw)(bool, std::vector<std::shared_ptr<Node>>*, void *user_data);
+    typedef void (*ShutdownCallbackRaw)(void *user_data);
 
     typedef std::function<void(bool success)> DoneCallbackSimple;
 
+    static ShutdownCallback
+    bindShutdownCb(ShutdownCallbackRaw shutdown_cb_raw, void* user_data) {
+        return [=]() { shutdown_cb_raw(user_data); };
+    }
     static DoneCallback
     bindDoneCb(DoneCallbackSimple donecb) {
         if (not donecb) return {};
@@ -197,6 +203,11 @@ public:
     Status getStatus() const {
         return std::max(getStatus(AF_INET), getStatus(AF_INET6));
     }
+
+    /**
+     * Performs final operations before quitting.
+     */
+    void shutdown(ShutdownCallback cb);
 
     /**
      * Returns true if the node is running (have access to an open socket).
@@ -663,14 +674,14 @@ private:
     struct Storage {
         InfoHash id;
         bool want4 {true}, want6 {true};
-        time_point last_maintenance_time {};
+        time_point maintenance_time {};
         std::vector<ValueStorage> values {};
         std::vector<Listener> listeners {};
         std::map<size_t, LocalListener> local_listeners {};
         size_t listener_token {1};
 
         Storage() {}
-        Storage(InfoHash id) : id(id) {}
+        Storage(InfoHash id, time_point now) : id(id), maintenance_time(now+MAX_STORAGE_MAINTENANCE_EXPIRE_TIME) {}
     };
 
     enum class MessageType {
@@ -848,7 +859,7 @@ private:
     void expireStorage();
     void storageChanged(Storage& st, ValueStorage&);
 
-    void maintainStorage(InfoHash id);
+    int maintainStorage(InfoHash id, bool force=false, DoneCallback donecb=nullptr);
 
     // Buckets
     Bucket* findBucket(const InfoHash& id, sa_family_t af) {

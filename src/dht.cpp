@@ -183,6 +183,24 @@ Dht::getStatus(sa_family_t af) const
     return Status::Connected;
 }
 
+void
+Dht::shutdown(ShutdownCallback cb) {
+    /****************************
+     *  Last store maintenance  *
+     ****************************/
+
+    auto remaining = std::make_shared<int>(0);
+    auto str_donecb = [=](bool, const std::vector<std::shared_ptr<Node>>&) {
+        --*remaining;
+        std::cout << "remaining: " << *remaining << std::endl;
+        if (!*remaining) { cb(); }
+    };
+
+    for (auto str : store) {
+        *remaining += maintainStorage(str.id, true, str_donecb);
+    }
+}
+
 bool
 Dht::isRunning(sa_family_t af) const
 {
@@ -1424,7 +1442,7 @@ Dht::listen(const InfoHash& id, GetCallback cb, Value::Filter f)
     Storage* st = findStorage(id);
     size_t tokenlocal = 0;
     if (!st && store.size() < MAX_HASHES) {
-        store.push_back(Storage {id});
+        store.push_back(Storage {id, now});
         st = &store.back();
     }
     if (st) {
@@ -1700,7 +1718,7 @@ Dht::storageStore(const InfoHash& id, const std::shared_ptr<Value>& value)
     if (!st) {
         if (store.size() >= MAX_HASHES)
             return nullptr;
-        store.push_back(Storage {id});
+        store.push_back(Storage {id, now});
         st = &store.back();
     }
 
@@ -1733,7 +1751,7 @@ Dht::storageAddListener(const InfoHash& id, const InfoHash& node, const sockaddr
     if (!st) {
         if (store.size() >= MAX_HASHES)
             return;
-        store.push_back(Storage {id});
+        store.push_back(Storage {id, now});
         st = &store.back();
     }
     sa_family_t af = from->sa_family;
@@ -2221,31 +2239,24 @@ Dht::bucketMaintenance(RoutingTable& list)
     return false;
 }
 
-void
-Dht::maintainStore(bool force) {
-    for (auto &str : store) {
-        if (force) { maintainStorage(str.id); }
-        else if (now > str.last_maintenance_time + MAX_STORAGE_MAINTENANCE_EXPIRE_TIME) {
-            maintainStorage(str.id);
-        }
-    }
-}
-
-void
-Dht::maintainStorage(InfoHash id) {
+int
+Dht::maintainStorage(InfoHash id, bool force, DoneCallback donecb) {
+    std::cout << "["<< myid << "] maintain storage for " << id << std::endl;
+    int announce_per_af = 0;
     auto *local_storage = findStorage(id);
-    if (!local_storage) { return; }
+    if (!local_storage) { return 0; }
 
     auto nodes = buckets.findClosestNodes(id);
     auto nodes6 = buckets6.findClosestNodes(id);
 
     if (!nodes.empty()) {
-        if (id.xorCmp(nodes.back()->id, myid) < 0) {
+        if (force || id.xorCmp(nodes.back()->id, myid) < 0) {
             for (auto &local_value_storage : local_storage->values) {
                 const auto& vt = getType(local_value_storage.data->type);
-                if (local_value_storage.time + vt.expiration > now + MAX_STORAGE_MAINTENANCE_EXPIRE_TIME) {
+                if (force || local_value_storage.time + vt.expiration > now + MAX_STORAGE_MAINTENANCE_EXPIRE_TIME) {
                     // gotta put that value there
-                    announce(id, AF_INET, local_value_storage.data, nullptr);
+                    announce(id, AF_INET, local_value_storage.data, donecb);
+                    ++announce_per_af;
                 }
             }
             local_storage->want4 = false;
@@ -2253,19 +2264,22 @@ Dht::maintainStorage(InfoHash id) {
     }
 
     if (!nodes6.empty()) {
-        if (id.xorCmp(nodes6.back()->id, myid) < 0) {
+        if (force || id.xorCmp(nodes6.back()->id, myid) < 0) {
             for (auto &local_value_storage : local_storage->values) {
                 const auto& vt = getType(local_value_storage.data->type);
-                if (local_value_storage.time + vt.expiration > now + MAX_STORAGE_MAINTENANCE_EXPIRE_TIME) {
+                if (force || local_value_storage.time + vt.expiration > now + MAX_STORAGE_MAINTENANCE_EXPIRE_TIME) {
                     // gotta put that value there
-                    announce(id, AF_INET6, local_value_storage.data, nullptr);
+                    announce(id, AF_INET6, local_value_storage.data, donecb);
+                    ++announce_per_af;
                 }
             }
             local_storage->want6 = false;
         }
     }
 
-    local_storage->last_maintenance_time = now;
+    local_storage->maintenance_time = now + MAX_STORAGE_MAINTENANCE_EXPIRE_TIME;
+
+    return announce_per_af;
 }
 
 void
@@ -2664,9 +2678,15 @@ Dht::periodic(const uint8_t *buf, size_t buflen,
     }
 
     //data persistence
-    maintainStore();
+    time_point storage_maintenance_time = now;
+    for (auto &str : store) {
+        if (now > str.maintenance_time) {
+            maintainStorage(str.id);
+        }
+        storage_maintenance_time = std::min(storage_maintenance_time, str.maintenance_time);
+    }
 
-    return std::min(confirm_nodes_time, search_time);
+    return std::min(confirm_nodes_time, std::min(search_time, storage_maintenance_time));
 }
 
 std::vector<Dht::ValuesExport>
