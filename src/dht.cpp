@@ -2678,7 +2678,7 @@ Dht::periodic(const uint8_t *buf, size_t buflen,
     }
 
     //data persistence
-    time_point storage_maintenance_time = now;
+    time_point storage_maintenance_time = time_point::max();
     for (auto &str : store) {
         if (now > str.maintenance_time) {
             maintainStorage(str.id);
