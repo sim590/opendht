@@ -130,7 +130,7 @@ class DhtNetworkSubProcess(NSPopen):
         Communication thread. This reads and writes to the sub process.
         """
         ENCODING = 'utf-8'
-        sleep_time = 0.5
+        sleep_time = 0.1
         stdin_line, stdout_line = '', ''
 
         # first read of process living. Expecting NOTIFY_TOKEN
@@ -287,6 +287,8 @@ def dataPersistenceTest():
                         # print subprocess stdout's data. This may be the dht
                         # node.
                         DhtNetwork.log(out)
+                    else:
+                        time.sleep(0.1)
 
             # checking if values were transfered to new nodes
             foreign_nodes_before_delete = foreign_nodes

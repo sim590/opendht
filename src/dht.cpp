@@ -192,7 +192,6 @@ Dht::shutdown(ShutdownCallback cb) {
     auto remaining = std::make_shared<int>(0);
     auto str_donecb = [=](bool, const std::vector<std::shared_ptr<Node>>&) {
         --*remaining;
-        std::cout << "remaining: " << *remaining << std::endl;
         if (!*remaining) { cb(); }
     };
 
@@ -1372,9 +1371,17 @@ Dht::announce(const InfoHash& id, sa_family_t af, std::shared_ptr<Value> value, 
             for (auto& n : sr->nodes)
                 n.acked[value->id] = {};
         }
-        if (a_sr->callback)
-            a_sr->callback(false, {});
-        a_sr->callback = callback;
+        if (sr->isAnnounced(value->id, getType(value->type), now)) {
+            if (a_sr->callback)
+                a_sr->callback(true, {});
+            a_sr->callback = {};
+            callback(true, {});
+            return;
+        } else {
+            if (a_sr->callback)
+                a_sr->callback(false, {});
+            a_sr->callback = callback;
+        }
     }
     auto tm = sr->getNextStepTime(types, now);
     if (tm < search_time) {
@@ -2241,7 +2248,6 @@ Dht::bucketMaintenance(RoutingTable& list)
 
 int
 Dht::maintainStorage(InfoHash id, bool force, DoneCallback donecb) {
-    std::cout << "["<< myid << "] maintain storage for " << id << std::endl;
     int announce_per_af = 0;
     auto *local_storage = findStorage(id);
     if (!local_storage) { return 0; }
