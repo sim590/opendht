@@ -5,12 +5,12 @@
 # distutils: libraries = opendht gnutls
 # cython: language_level=3
 #
-# Copyright (c) 2015 Savoir-Faire Linux Inc. 
+# Copyright (c) 2015 Savoir-Faire Linux Inc.
 # Author: Guillaume Roguez <guillaume.roguez@savoirfairelinux.com>
 # Author: Adrien Béraud <adrien.beraud@savoirfairelinux.com>
 #
 # This wrapper is written for Cython 0.22
-# 
+#
 # This file is part of OpenDHT Python Wrapper.
 #
 #    OpenDHT Python Wrapper is free software:  you can redistribute it and/or modify
@@ -270,7 +270,7 @@ cdef class DhtRunner(_WithID):
     def shutdown(self, shutdown_cb=None):
         cb_obj = {'shutdown':shutdown_cb}
         ref.Py_INCREF(cb_obj)
-        self.thisptr.shutdown(Dht.bindShutdownCb(py_shutdown_callback, <void*>cb_obj))
+        self.thisptr.shutdown(cpp.Dht.bindShutdownCb(shutdown_callback, <void*>cb_obj))
     def isRunning(self):
         return self.thisptr.isRunning()
     def getStorageLog(self):

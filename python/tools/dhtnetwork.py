@@ -26,7 +26,7 @@ class DhtNetwork(object):
 
     @staticmethod
     def run_node(ip4, ip6, p, bootstrap=[], is_bootstrap=False):
-        print("run_node", ip4, ip6, p, bootstrap)
+        DhtNetwork.log("run_node", ip4, ip6, p, bootstrap)
         id = Identity()
         #id.generate("dhtbench"+str(p), Identity(), 1024)
         n = DhtRunner()
@@ -53,7 +53,7 @@ class DhtNetwork(object):
         self.ip6 = ip6 if ip6 else ips[1]
         self.bootstrap = bootstrap
         if first_bootstrap:
-            print("Starting bootstrap node")
+            DhtNetwork.log("Starting bootstrap node")
             self.nodes.append(DhtNetwork.run_node(self.ip4, self.ip6, self.port, self.bootstrap, is_bootstrap=True))
             self.bootstrap = [(self.ip4, str(self.port))]
             self.port += 1

@@ -120,7 +120,7 @@ class DhtNetworkSubProcess(NSPopen):
 
     def __repr__(self):
         return 'DhtNetwork on virtual namespace "%s"' % self._virtual_ns
-    
+
     def _setStdoutFlags(self):
         """
         Sets non-blocking read flags for subprocess stdout file descriptor.
@@ -212,7 +212,7 @@ class DhtNetworkSubProcess(NSPopen):
         return line
 
 def random_hash():
-    return PyInfoHash(''.join(random.SystemRandom().choice(string.hexdigits) for _ in range(40)).encode())
+    return InfoHash(''.join(random.SystemRandom().choice(string.hexdigits) for _ in range(40)).encode())
 
 #TODO: Test this
 def dataPersistenceTest():
@@ -261,7 +261,7 @@ def dataPersistenceTest():
         producer = bootstrap.get(2)
 
         myhash = random_hash()
-        local_values = [PyValue(b'foo'), PyValue(b'bar'), PyValue(b'foobar')]
+        local_values = [Value(b'foo'), Value(b'bar'), Value(b'foobar')]
         successfullTransfer = lambda lv,fv: len(lv) == len(fv)
 
         for val in local_values:
