@@ -106,6 +106,7 @@ class DhtNetworkSubProcess(NSPopen):
     def __init__(self, ns, cmd, quit=False, **kwargs):
         super(DhtNetworkSubProcess, self).__init__(ns, cmd, **kwargs)
         self._setStdoutFlags()
+        self._virtual_ns = ns
 
         self._quit = quit
         self._lock = threading.Condition()
@@ -117,6 +118,9 @@ class DhtNetworkSubProcess(NSPopen):
         self._thread.daemon = True
         self._thread.start()
 
+    def __repr__(self):
+        return 'DhtNetwork on virtual namespace "%s"' % self._virtual_ns
+    
     def _setStdoutFlags(self):
         """
         Sets non-blocking read flags for subprocess stdout file descriptor.
@@ -161,14 +165,25 @@ class DhtNetworkSubProcess(NSPopen):
                     with self._lock:
                         self._out_queue.put(stdout_line)
 
+        with self._lock:
+            self._lock.notify()
+
+    def stop_communicating(self):
+        """
+        Stops the I/O thread from communicating with the subprocess.
+        """
+        if not self._quit:
+            self._quit = True
+            with self._lock:
+                self._lock.notify()
+                self._lock.wait()
+
     def quit(self):
         """
         Notifies thread and sub process to terminate. This is blocking call
         until the sub process finishes.
         """
-        self._quit = True
-        with self._lock:
-            self._lock.notify()
+        self.stop_communicating()
         self.send_signal(signal.SIGINT);
         self.wait()
         self.release()
@@ -445,13 +460,9 @@ if __name__ == '__main__':
     finally:
         for p in wb.procs:
             if p:
-                p.send_signal(signal.SIGINT);
+                p.quit()
         bootstrap.resize(0)
+        sys.stdout.write('Shuting down the virtual IP network... ')
+        sys.stdout.flush()
         wb.destroy_virtual_net()
-        for p in wb.procs:
-            if p:
-                try:
-                    p.wait()
-                    p.release()
-                except Exception as e:
-                    print(e)
+        print('Done.')

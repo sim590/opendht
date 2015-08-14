@@ -205,9 +205,8 @@ if __name__ == '__main__':
                         for n in new_req[1]:
                             net.end_node(id=n, shutdown=True)
                     notify_benchmark()
-            t.join()
     except Exception as e:
-        DhtNetwork.log(e.message)
+        DhtNetwork.log(e)
     finally:
         if net:
             net.resize(0)
