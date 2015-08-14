@@ -198,6 +198,7 @@ Dht::shutdown(ShutdownCallback cb) {
     for (auto str : store) {
         *remaining += maintainStorage(str.id, true, str_donecb);
     }
+    if (!*remaining) { cb(); }
 }
 
 bool
