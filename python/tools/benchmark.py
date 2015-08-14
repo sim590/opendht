@@ -280,8 +280,11 @@ def dataPersistenceTest():
                 lock.wait()
 
         if not successfullTransfer(local_values, foreign_values):
-            bootstrap.log('[GET]: Only ', len(foreign_values) ,' on ',
-                    len(local_values), ' values successfully put.')
+            if foreign_values:
+                bootstrap.log('[GET]: Only ', len(foreign_values) ,' on ',
+                        len(local_values), ' values successfully put.')
+            else:
+                bootstrap.log('[GET]: 0 values successfully put')
 
         if foreign_values and foreign_nodes:
             bootstrap.log('Values are found on :')
@@ -316,15 +319,19 @@ def dataPersistenceTest():
                 while done > 0:
                     lock.wait()
 
+            new_nodes = set(foreign_nodes) - set(foreign_nodes_before_delete)
             if not successfullTransfer(local_values, foreign_values):
                 bootstrap.log('[GET]: Only %s on %s values persisted.' %
                         (len(foreign_values), len(local_values)))
             else:
                 bootstrap.log('[GET]: All values successfully persisted.')
-            if foreign_values and foreign_nodes:
-                bootstrap.log('Values are now found on :')
-                for node in set(foreign_nodes) - set(foreign_nodes_before_delete):
-                    bootstrap.log(node)
+            if foreign_values:
+                if new_nodes:
+                    bootstrap.log('Values are now newly found on:')
+                    for node in new_nodes:
+                        bootstrap.log(node)
+                else:
+                    bootstrap.log("Values didn't reach new hosting nodes after shutdown.")
         else:
             bootstrap.log("[GET]: either couldn't fetch values or nodes hosting values...")
 
