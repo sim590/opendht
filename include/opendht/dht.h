@@ -292,16 +292,16 @@ public:
      * reannounced on a regular basis.
      * User can call #cancelPut(InfoHash, Value::Id) to cancel a put operation.
      */
-    void put(const InfoHash& key, std::shared_ptr<Value>, DoneCallback cb=nullptr);
-    void put(const InfoHash& key, const std::shared_ptr<Value>& v, DoneCallbackSimple cb) {
-        put(key, v, bindDoneCb(cb));
+    void put(const InfoHash& key, std::shared_ptr<Value>, DoneCallback cb=nullptr, time_point created=time_point::max());
+    void put(const InfoHash& key, const std::shared_ptr<Value>& v, DoneCallbackSimple cb, time_point created=time_point::max()) {
+        put(key, v, bindDoneCb(cb), created);
     }
 
-    void put(const InfoHash& key, Value&& v, DoneCallback cb=nullptr) {
-        put(key, std::make_shared<Value>(std::move(v)), cb);
+    void put(const InfoHash& key, Value&& v, DoneCallback cb=nullptr, time_point created=time_point::max()) {
+        put(key, std::make_shared<Value>(std::move(v)), cb, created);
     }
-    void put(const InfoHash& key, Value&& v, DoneCallbackSimple cb) {
-        put(key, std::forward<Value>(v), bindDoneCb(cb));
+    void put(const InfoHash& key, Value&& v, DoneCallbackSimple cb, time_point created=time_point::max()) {
+        put(key, std::forward<Value>(v), bindDoneCb(cb), created);
     }
 
     /**
@@ -565,6 +565,7 @@ private:
      */
     struct Announce {
         std::shared_ptr<Value> value;
+        time_point created;
         DoneCallback callback;
     };
 
@@ -813,9 +814,9 @@ private:
 
     int sendListenConfirmation(const sockaddr*, socklen_t, TransId);
 
-    int sendAnnounceValue(const sockaddr*, socklen_t, TransId,
-                            const InfoHash&, const Value&,
-                            const Blob& token, int confirm);
+    int sendAnnounceValue(const sockaddr*, socklen_t, TransId, const InfoHash&,
+            const Value&, time_point created, const Blob& token,
+            int confirm);
 
     int sendValueAnnounced(const sockaddr*, socklen_t, TransId, Value::Id);
 
@@ -831,6 +832,7 @@ private:
         TransId tid;
         Blob token;
         Value::Id value_id;
+        time_point created { time_point::max() };
         Blob nodes4;
         Blob nodes6;
         std::vector<std::shared_ptr<Value>> values;
@@ -855,7 +857,7 @@ private:
     }
 
     void storageAddListener(const InfoHash& id, const InfoHash& node, const sockaddr *from, socklen_t fromlen, uint16_t tid);
-    ValueStorage* storageStore(const InfoHash& id, const std::shared_ptr<Value>& value);
+    ValueStorage* storageStore(const InfoHash& id, const std::shared_ptr<Value>& value, time_point created=time_point::max());
     void expireStorage();
     void storageChanged(Storage& st, ValueStorage&);
 
@@ -906,7 +908,7 @@ private:
      * The values can be filtered by an arbitrary provided filter.
      */
     Search* search(const InfoHash& id, sa_family_t af, GetCallback = nullptr, DoneCallback = nullptr, Value::Filter = Value::AllFilter());
-    void announce(const InfoHash& id, sa_family_t af, std::shared_ptr<Value> value, DoneCallback callback);
+    void announce(const InfoHash& id, sa_family_t af, std::shared_ptr<Value> value, DoneCallback callback, time_point created=time_point::max());
     size_t listenTo(const InfoHash& id, sa_family_t af, GetCallback cb, Value::Filter f = Value::AllFilter());
 
     std::list<Search>::iterator newSearch();

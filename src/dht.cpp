@@ -985,8 +985,9 @@ Dht::searchStep(Search& sr)
                     //std::cout << "Sending announce_value to " << n.node->id << " " << print_addr(n.node->ss, n.node->sslen) << std::endl;
 
                     sendAnnounceValue((sockaddr*)&n.node->ss, n.node->sslen,
-                                       TransId {TransPrefix::ANNOUNCE_VALUES, sr.tid}, sr.id, *a.value,
-                                       n.token, n.node->reply_time >= now - UDP_REPLY_TIME);
+                            TransId {TransPrefix::ANNOUNCE_VALUES, sr.tid},
+                            sr.id, *a.value, a.created, n.token,
+                            n.node->reply_time >= now - UDP_REPLY_TIME);
                     if (a_status == n.acked.end()) {
                         n.acked[vid] = { now };
                     } else {
@@ -1344,7 +1345,7 @@ Dht::search(const InfoHash& id, sa_family_t af, GetCallback callback, DoneCallba
 }
 
 void
-Dht::announce(const InfoHash& id, sa_family_t af, std::shared_ptr<Value> value, DoneCallback callback)
+Dht::announce(const InfoHash& id, sa_family_t af, std::shared_ptr<Value> value, DoneCallback callback, time_point created)
 {
     if (!value) {
         if (callback)
@@ -1365,7 +1366,7 @@ Dht::announce(const InfoHash& id, sa_family_t af, std::shared_ptr<Value> value, 
         return a.value->id == value->id;
     });
     if (a_sr == sr->announce.end())
-        sr->announce.emplace_back(Announce {value, callback});
+        sr->announce.emplace_back(Announce {value, created, callback});
     else {
         if (a_sr->value != value) {
             a_sr->value = value;
@@ -1510,7 +1511,7 @@ Dht::cancelListen(const InfoHash& id, size_t token)
 }
 
 void
-Dht::put(const InfoHash& id, std::shared_ptr<Value> val, DoneCallback callback)
+Dht::put(const InfoHash& id, std::shared_ptr<Value> val, DoneCallback callback, time_point created)
 {
     now = clock::now();
 
@@ -1538,13 +1539,13 @@ Dht::put(const InfoHash& id, std::shared_ptr<Value> val, DoneCallback callback)
         *done4 = true;
         *ok |= ok4;
         donecb(nodes);
-    });
+    }, created);
     announce(id, AF_INET6, val, [=](bool ok6, const std::vector<std::shared_ptr<Node>>& nodes) {
         DHT_DEBUG("Announce done IPv6 %d", ok6);
         *done6 = true;
         *ok |= ok6;
         donecb(nodes);
-    });
+    }, created);
 }
 
 struct OpStatus {
@@ -1720,8 +1721,9 @@ Dht::storageChanged(Storage& st, ValueStorage& v)
 }
 
 Dht::ValueStorage*
-Dht::storageStore(const InfoHash& id, const std::shared_ptr<Value>& value)
+Dht::storageStore(const InfoHash& id, const std::shared_ptr<Value>& value, time_point created)
 {
+    created = std::min(created, now);
     Storage *st = findStorage(id);
     if (!st) {
         if (store.size() >= MAX_HASHES)
@@ -1735,7 +1737,7 @@ Dht::storageStore(const InfoHash& id, const std::shared_ptr<Value>& value)
     });
     if (it != st->values.end()) {
         /* Already there, only need to refresh */
-        it->time = now;
+        it->time = created;
         if (it->data != value) {
             DHT_DEBUG("Updating %s -> %s", id.toString().c_str(), value->toString().c_str());
             it->data = value;
@@ -1746,7 +1748,7 @@ Dht::storageStore(const InfoHash& id, const std::shared_ptr<Value>& value)
         DHT_DEBUG("Storing %s -> %s", id.toString().c_str(), value->toString().c_str());
         if (st->values.size() >= MAX_VALUES)
             return nullptr;
-        st->values.emplace_back(value, now);
+        st->values.emplace_back(value, created);
         storageChanged(*st, st->values.back());
         return &st->values.back();
     }
@@ -2262,7 +2264,7 @@ Dht::maintainStorage(InfoHash id, bool force, DoneCallback donecb) {
                 const auto& vt = getType(local_value_storage.data->type);
                 if (force || local_value_storage.time + vt.expiration > now + MAX_STORAGE_MAINTENANCE_EXPIRE_TIME) {
                     // gotta put that value there
-                    announce(id, AF_INET, local_value_storage.data, donecb);
+                    announce(id, AF_INET, local_value_storage.data, donecb, local_value_storage.time);
                     ++announce_per_af;
                 }
             }
@@ -2276,7 +2278,7 @@ Dht::maintainStorage(InfoHash id, bool force, DoneCallback donecb) {
                 const auto& vt = getType(local_value_storage.data->type);
                 if (force || local_value_storage.time + vt.expiration > now + MAX_STORAGE_MAINTENANCE_EXPIRE_TIME) {
                     // gotta put that value there
-                    announce(id, AF_INET6, local_value_storage.data, donecb);
+                    announce(id, AF_INET6, local_value_storage.data, donecb, local_value_storage.time);
                     ++announce_per_af;
                 }
             }
@@ -2577,7 +2579,7 @@ Dht::processMessage(const uint8_t *buf, size_t buflen, const sockaddr *from, soc
                 const auto& type = getType(lv->type);
                 if (type.editPolicy(msg.info_hash, lv, vc, msg.id, from, fromlen)) {
                     DHT_DEBUG("Editing value of type %s belonging to %s at %s.", type.name.c_str(), v->owner.getId().toString().c_str(), msg.info_hash.toString().c_str());
-                    storageStore(msg.info_hash, vc);
+                    storageStore(msg.info_hash, vc, msg.created);
                 } else {
                     DHT_WARN("Rejecting edition of type %s belonging to %s at %s because of storage policy.", type.name.c_str(), v->owner.getId().toString().c_str(), msg.info_hash.toString().c_str());
                 }
@@ -2586,7 +2588,7 @@ Dht::processMessage(const uint8_t *buf, size_t buflen, const sockaddr *from, soc
                 const auto& type = getType(vc->type);
                 if (type.storePolicy(msg.info_hash, vc, msg.id, from, fromlen)) {
                     DHT_DEBUG("Storing value of type %s belonging to %s at %s.", type.name.c_str(), v->owner.getId().toString().c_str(), msg.info_hash.toString().c_str());
-                    storageStore(msg.info_hash, vc);
+                    storageStore(msg.info_hash, vc, msg.created);
                 } else {
                     DHT_WARN("Rejecting storage of type %s belonging to %s at %s because of storage policy.", type.name.c_str(), v->owner.getId().toString().c_str(), msg.info_hash.toString().c_str());
                 }
@@ -3140,17 +3142,21 @@ Dht::sendListenConfirmation(const sockaddr* sa, socklen_t salen, TransId tid)
 
 int
 Dht::sendAnnounceValue(const sockaddr *sa, socklen_t salen, TransId tid,
-                   const InfoHash& infohash, const Value& value,
+                   const InfoHash& infohash, const Value& value, time_point created,
                    const Blob& token, int confirm)
 {
     msgpack::sbuffer buffer;
     msgpack::packer<msgpack::sbuffer> pk(&buffer);
     pk.pack_map(5);
 
-    pk.pack(std::string("a")); pk.pack_map(4);
+    pk.pack(std::string("a")); pk.pack_map((created < now ? 5 : 4));
       pk.pack(std::string("id"));     pk.pack(myid);
       pk.pack(std::string("h"));      pk.pack(infohash);
       pk.pack(std::string("values")); pk.pack_array(1); pk.pack(value);
+      if (created < now) {
+          pk.pack(std::string("c"));
+          pk.pack(to_time_t(created));
+      }
       pk.pack(std::string("token"));  pk.pack(token);
 
     pk.pack(std::string("q")); pk.pack(std::string("put"));
@@ -3262,6 +3268,9 @@ Dht::ParsedMessage::msgpack_unpack(msgpack::object msg)
 
     if (auto vid = findMapValue(req, "vid"))
         value_id = vid->as<Value::Id>();
+
+    if (auto rcreated = findMapValue(req, "c"))
+        created = from_time_t(rcreated->as<std::time_t>());
 
     if (auto rnodes4 = findMapValue(req, "n4")) {
         auto n4b = rnodes4->as<std::vector<char>>();
