@@ -224,6 +224,7 @@ def dataPersistenceTest():
     procs = wb.procs
 
     DEL_REQ = b"del"
+    DUMP_STORAGE_REQ = b"strl"
 
     lock = threading.Condition()
     done = 0
