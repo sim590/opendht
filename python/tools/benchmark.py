@@ -256,7 +256,7 @@ class PersistenceTest(FeatureTest):
         """TODO: to be defined1.
 
         :test: is one of the following:
-                - 'time': test persistence of data based on internal OpenDHT
+                - 'mult_time': test persistence of data based on internal OpenDHT
                   storage maintenance timings.
                 - 'delete': test persistence of data upon deletion of nodes.
                 - 'replace': replacing cluster successively.
@@ -265,7 +265,7 @@ class PersistenceTest(FeatureTest):
         self._test = test
 
         # opts
-        self._dump_storage = True if 'dump-str-log' in opts else False
+        self._dump_storage = True if 'dump_str_log' in opts else False
 
     @staticmethod
     def getcb(value):
@@ -339,8 +339,8 @@ class PersistenceTest(FeatureTest):
             self._deleteTest(**opts)
         elif self._test == 'replace':
             self._resplaceClusterTest(**opts)
-        elif self._test == 'time':
-            self._timeTest(**opts)
+        elif self._test == 'mult_time':
+            self._multTimeTest(**opts)
 
     #-----------
     #-  Tests  -
@@ -404,7 +404,6 @@ class PersistenceTest(FeatureTest):
         finally:
             bootstrap.resize(1)
 
-    #TODO
     def _resplaceClusterTest(self, **opts):
         PersistenceTest.done = 0
         PersistenceTest.lock = threading.Condition()
@@ -446,9 +445,44 @@ class PersistenceTest(FeatureTest):
         finally:
             bootstrap.resize(1)
 
-    #TODO
-    def _timeTest(self, **opts):
-        pass
+    def _multTimeTest(self, **opts):
+        PersistenceTest.done = 0
+        PersistenceTest.lock = threading.Condition()
+        PersistenceTest.foreign_nodes = []
+        PersistenceTest.foreign_values = []
+
+        n_producers = opts['producers'] if 'producers' in opts else 16
+        hashes = []
+        values = [Value(b'foo')]
+        nodes = set([])
+
+        try:
+            bootstrap.resize(n_producers+2)
+            consumer = bootstrap.get(1)
+            producers = (bootstrap.get(n) for n in range(2,n_producers+2))
+            for p in producers:
+                hashes.append(random_hash())
+                self._dhtPut(p, hashes[-1], values[0])
+
+            for h in hashes:
+                self._dhtGet(consumer, h)
+                for n in PersistenceTest.foreign_nodes:
+                    nodes.add(n)
+
+            bootstrap.log('Waiting 10 minutes for normal storage maintenance.')
+            time.sleep(10*60)
+
+            nodes_after_time = set([])
+            for h in hashes:
+                self._dhtGet(consumer, h)
+                for n in PersistenceTest.foreign_nodes:
+                    nodes_after_time.add(n)
+            self._result(values, nodes_after_time - nodes)
+
+        except Exception as e:
+            print(e)
+        finally:
+            bootstrap.resize(1)
 
 class PerformanceTest(FeatureTest):
     """Docstring for PerformanceTest. """
@@ -571,8 +605,8 @@ if __name__ == '__main__':
             help='Launches performance benchmark test. Available args for "-t" are: gets.')
     featureArgs.add_argument('--data-persistence', action='store_true', default=0,
             help='Launches data persistence benchmark test. '\
-                    'Available args for "-t" are: delete, replace, time. '\
-                    'Available args for "-o" are : dump-str-log')
+                    'Available args for "-t" are: delete, replace, mult_time. '\
+                    'Available args for "-o" are : dump_str_log')
 
 
     args = parser.parse_args()
