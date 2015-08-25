@@ -101,6 +101,11 @@ class DhtNetworkSubProcess(NSPopen):
     process' stdout until it finds 'DhtNetworkSubProcess.NOTIFY_TOKEN' token,
     therefor, waits for the sub process to spawn.
     """
+    # requests
+    DELETE_REQ = b"del"
+    DUMP_STORAGE_REQ = b"strl"
+
+    # tokens
     NOTIFY_TOKEN = 'notify'
 
     def __init__(self, ns, cmd, quit=False, **kwargs):
@@ -211,239 +216,317 @@ class DhtNetworkSubProcess(NSPopen):
                 pass
         return line
 
+    def getlinesUntilNotify(self):
+        while True:
+            out = self.getline()
+            if DhtNetworkSubProcess.NOTIFY_TOKEN in out:
+                break
+            elif out:
+                yield out
+            else:
+                time.sleep(0.1)
+
+
 def random_hash():
     return InfoHash(''.join(random.SystemRandom().choice(string.hexdigits) for _ in range(40)).encode())
 
-#TODO: Test this
-def dataPersistenceTest():
-    """TODO: Docstring for dataPersistenceTest.
+class FeatureTest(object):
 
-    """
-    global wb
-    bootstrap = wb.get_bootstrap()
-    procs = wb.procs
+    """A feature test is executed """
 
-    DEL_REQ = b"del"
-    DUMP_STORAGE_REQ = b"strl"
+    def __init__(self):
+        """TODO: to be defined1. """
 
-    lock = threading.Condition()
-    done = 0
+    def run(self):
+        raise NotImplementedError('%s must to be redefined.' % self.__class__.__name__)
 
-    foreign_nodes = []
-    foreign_values = []
+class PersistenceTest(FeatureTest):
+    """Docstring for PersistenceTest. """
 
-    def getcb(value):
-        nonlocal bootstrap, foreign_values
-        bootstrap.log('[GET]: %s' % value)
-        foreign_values.append(value)
-        return True
+    def __init__(self, test, *opts):
+        """TODO: to be defined1.
 
-    def putDoneCb(ok, nodes):
-        nonlocal lock, done
-        with lock:
-            done -= 1
-            lock.notify()
+        :test: is one of the following:
+                - 'time': test persistence of data based on internal OpenDHT
+                  storage maintenance timings.
+                - 'delete': test persistence of data upon deletion of nodes.
+                - 'replace': replacing cluster successively.
+        :dump_storage: TODO
+        """
+        self._test = test
 
-    def getDoneCb(ok, nodes):
-        nonlocal bootstrap, lock, done, foreign_nodes
-        with lock:
-            if not ok:
-                bootstrap.log("[GET]: failed !")
-            else:
-                for node in nodes:
-                    if not node.getNode().isExpired():
-                        foreign_nodes.append(node.getId().toString())
-            done -= 1
-            lock.notify()
+        # opts
+        self._dump_storage = True if 'dump-str-log' in opts else False
 
-    try:
-        bootstrap.resize(3)
-        consumer = bootstrap.get(1)
-        producer = bootstrap.get(2)
+    def run(self):
+        if self._test == 'delete':
+            self._deleteTest()
+        elif self._test == 'replace':
+            self._resplaceClusterTest()
+        elif self._test == 'time':
+            self._timeTest()
 
-        myhash = random_hash()
-        local_values = [Value(b'foo'), Value(b'bar'), Value(b'foobar')]
-        successfullTransfer = lambda lv,fv: len(lv) == len(fv)
+    #-----------
+    #-  Tests  -
+    #-----------
 
-        for val in local_values:
+    def _deleteTest(self):
+        global wb
+        bootstrap = wb.get_bootstrap()
+        procs = wb.procs
+
+        done = 0
+        lock = threading.Condition()
+
+        foreign_nodes = []
+        foreign_values = []
+
+        def getcb(value):
+            nonlocal lock, foreign_values
+            bootstrap.log('[GET]: %s' % value)
+            foreign_values.append(value)
+            return True
+
+        def putDoneCb(ok, nodes):
+            nonlocal lock, done
             with lock:
-                bootstrap.log('[PUT]: %s' % val)
-                done += 1
-                producer.put(myhash, val, putDoneCb)
-                while done > 0:
-                    lock.wait()
+                done -= 1
+                lock.notify()
 
-        # checking if values were transfered.
-        with lock:
-            done += 1
-            consumer.get(myhash, getcb, getDoneCb)
-            while done > 0:
-                lock.wait()
-
-        if not successfullTransfer(local_values, foreign_values):
-            if foreign_values:
-                bootstrap.log('[GET]: Only ', len(foreign_values) ,' on ',
-                        len(local_values), ' values successfully put.')
-            else:
-                bootstrap.log('[GET]: 0 values successfully put')
-
-        if foreign_values and foreign_nodes:
-            bootstrap.log('Values are found on :')
-            for node in foreign_nodes:
-                bootstrap.log(node)
-
-            bootstrap.log('Removing all nodes hosting target values...')
-            serialized_req = DEL_REQ + b' ' + b' '.join(map(bytes, foreign_nodes))
-            for proc in procs:
-                bootstrap.log('[REMOVE]: sending (req: "', serialized_req, '")',
-                        'to', proc)
-                proc.send(serialized_req + b'\n')
-                while True:
-                    out = proc.getline()
-                    if DhtNetworkSubProcess.NOTIFY_TOKEN in out:
-                        break
-                    elif out:
-                        # print subprocess stdout's data. This may be the dht
-                        # node.
-                        DhtNetwork.log(out)
-                    else:
-                        time.sleep(0.1)
-
-            # checking if values were transfered to new nodes
-            foreign_nodes_before_delete = foreign_nodes
-            foreign_nodes = []
-            foreign_values = []
+        def getDoneCb(ok, nodes):
+            nonlocal lock, done
             with lock:
-                bootstrap.log('[GET]: trying to fetch persistant values')
+                if not ok:
+                    bootstrap.log("[GET]: failed !")
+                else:
+                    for node in nodes:
+                        if not node.getNode().isExpired():
+                            foreign_nodes.append(node.getId().toString())
+                done -= 1
+                lock.notify()
+
+        try:
+            bootstrap.resize(3)
+            consumer = bootstrap.get(1)
+            producer = bootstrap.get(2)
+
+            myhash = random_hash()
+            local_values = [Value(b'foo'), Value(b'bar'), Value(b'foobar')]
+            successfullTransfer = lambda lv,fv: len(lv) == len(fv)
+
+            for val in local_values:
+                with lock:
+                    bootstrap.log('[PUT]: %s' % val)
+                    done += 1
+                    producer.put(myhash, val, putDoneCb)
+                    while done > 0:
+                        lock.wait()
+
+            # checking if values were transfered.
+            with lock:
                 done += 1
                 consumer.get(myhash, getcb, getDoneCb)
                 while done > 0:
                     lock.wait()
 
-            new_nodes = set(foreign_nodes) - set(foreign_nodes_before_delete)
             if not successfullTransfer(local_values, foreign_values):
-                bootstrap.log('[GET]: Only %s on %s values persisted.' %
-                        (len(foreign_values), len(local_values)))
-            else:
-                bootstrap.log('[GET]: All values successfully persisted.')
-            if foreign_values:
-                if new_nodes:
-                    bootstrap.log('Values are now newly found on:')
-                    for node in new_nodes:
-                        bootstrap.log(node)
+                if foreign_values:
+                    bootstrap.log('[GET]: Only ', len(foreign_values) ,' on ',
+                            len(local_values), ' values successfully put.')
                 else:
-                    bootstrap.log("Values didn't reach new hosting nodes after shutdown.")
-        else:
-            bootstrap.log("[GET]: either couldn't fetch values or nodes hosting values...")
+                    bootstrap.log('[GET]: 0 values successfully put')
 
-    except Exception as e:
-        print(e)
-    finally:
-        bootstrap.resize(1)
+            if foreign_values and foreign_nodes:
+                bootstrap.log('Values are found on :')
+                for node in foreign_nodes:
+                    bootstrap.log(node)
 
-def getsTimesTest():
-    """TODO: Docstring for
+                bootstrap.log('Removing all nodes hosting target values...')
+                serialized_req = DhtNetworkSubProcess.DELETE_REQ  + b' ' + b' '.join(map(bytes, foreign_nodes))
+                for proc in procs:
+                    bootstrap.log('[REMOVE]: sending (req: "', serialized_req, '")',
+                            'to', proc)
+                    proc.send(serialized_req + b'\n')
+                    for line in proc.getlinesUntilNotify():
+                        DhtNetwork.log(line)
 
-    """
-    global wb
-    bootstrap = wb.get_bootstrap()
+                # checking if values were transfered to new nodes
+                foreign_nodes_before_delete = foreign_nodes
+                foreign_nodes = []
+                foreign_values = []
+                with lock:
+                    bootstrap.log('[GET]: trying to fetch persistant values')
+                    done += 1
+                    consumer.get(myhash, getcb, getDoneCb)
+                    while done > 0:
+                        lock.wait()
 
-    plt.ion()
+                new_nodes = set(foreign_nodes) - set(foreign_nodes_before_delete)
+                if not successfullTransfer(local_values, foreign_values):
+                    bootstrap.log('[GET]: Only %s on %s values persisted.' %
+                            (len(foreign_values), len(local_values)))
+                else:
+                    bootstrap.log('[GET]: All values successfully persisted.')
+                if foreign_values:
+                    if new_nodes:
+                        bootstrap.log('Values are now newly found on:')
+                        for node in new_nodes:
+                            bootstrap.log(node)
+                        if self._dump_storage:
+                            serialized_req = \
+                                DhtNetworkSubProcess.DUMP_STORAGE_REQ + b' ' + \
+                                        b' '.join(map(bytes, foreign_nodes))
 
-    fig, axes = plt.subplots(2, 1)
-    fig.tight_layout()
+                            bootstrap.log('Dumping all storage log from '\
+                                          'hosting nodes.')
+                            for proc in procs:
+                                proc.send(serialized_req + b'\n')
+                                for line in proc.getlinesUntilNotify():
+                                    DhtNetwork.log(line)
+                    else:
+                        bootstrap.log("Values didn't reach new hosting nodes after shutdown.")
+            else:
+                bootstrap.log("[GET]: either couldn't fetch values or nodes hosting values...")
 
-    lax = axes[0]
-    hax = axes[1]
+        except Exception as e:
+            print(e)
+        finally:
+            bootstrap.resize(1)
 
-    lines = None#ax.plot([])
-    #plt.ylabel('time (s)')
-    hax.set_ylim(0, 2)
+    #TODO
+    def _resplaceClusterTest(self):
+        pass
 
-    # let the network stabilise
-    plt.pause(60)
+    #TODO
+    def _timeTest(self):
+        pass
 
-    #start = time.time()
-    times = []
+class PerformanceTest(FeatureTest):
+    """Docstring for PerformanceTest. """
 
-    lock = threading.Condition()
-    done = 0
+    def __init__(self, test, *opts):
+        self._test = test
 
-    def getcb(v):
-        nonlocal bootstrap
-        bootstrap.log("found", v)
-        return True
+    def run(self):
+        if self._test == 'gets':
+            self._getsTimesTest()
 
-    def donecb(ok, nodes):
-        nonlocal bootstrap, lock, done, times
-        t = time.time()-start
-        with lock:
-            if not ok:
-                bootstrap.log("failed !")
-            times.append(t)
-            done -= 1
-            lock.notify()
+    def _getsTimesTest(self):
+        """TODO: Docstring for
 
-    def update_plot():
-        nonlocal lines
-        while lines:
-            l = lines.pop()
-            l.remove()
-            del l
-        lines = plt.plot(times, color='blue')
-        plt.draw()
+        """
+        global wb
+        bootstrap = wb.get_bootstrap()
+        procs = wb.procs
 
-    def run_get():
-        nonlocal bootstrap, done
-        done += 1
-        start = time.time()
-        bootstrap.front().get(InfoHash.getRandom(), getcb, lambda ok, nodes: donecb(ok, nodes, start))
+        plt.ion()
 
-    plt.pause(5)
+        fig, axes = plt.subplots(2, 1)
+        fig.tight_layout()
 
-    plt.show()
-    update_plot()
+        lax = axes[0]
+        hax = axes[1]
 
-    times = []
-    for n in range(10):
-        wb.replace_cluster()
-        plt.pause(2)
-        bootstrap.log("Getting 50 random hashes succesively.")
-        for i in range(50):
+        lines = None#ax.plot([])
+        #plt.ylabel('time (s)')
+        hax.set_ylim(0, 2)
+
+        # let the network stabilise
+        plt.pause(60)
+
+        #start = time.time()
+        times = []
+
+        lock = threading.Condition()
+        done = 0
+
+        def getcb(v):
+            nonlocal bootstrap
+            bootstrap.log("found", v)
+            return True
+
+        def donecb(ok, nodes):
+            nonlocal bootstrap, lock, done, times
+            t = time.time()-start
             with lock:
-                done += 1
-                start = time.time()
-                bootstrap.front().get(InfoHash.getRandom(), getcb, donecb)
-                while done > 0:
-                    lock.wait()
-                    update_plot()
-            update_plot()
-        print("Took", np.sum(times), "mean", np.mean(times), "std", np.std(times), "min", np.min(times), "max", np.max(times))
+                if not ok:
+                    bootstrap.log("failed !")
+                times.append(t)
+                done -= 1
+                lock.notify()
 
-    print('GET calls timings benchmark test : DONE. '  \
-            'Close Matplotlib window for terminating the program.')
-    plt.ioff()
-    plt.show()
+        def update_plot():
+            nonlocal lines
+            while lines:
+                l = lines.pop()
+                l.remove()
+                del l
+            lines = plt.plot(times, color='blue')
+            plt.draw()
+
+        def run_get():
+            nonlocal done
+            done += 1
+            start = time.time()
+            bootstrap.front().get(InfoHash.getRandom(), getcb, lambda ok, nodes: donecb(ok, nodes, start))
+
+        plt.pause(5)
+
+        plt.show()
+        update_plot()
+
+        times = []
+        for n in range(10):
+            replace_cluster()
+            plt.pause(2)
+            bootstrap.log("Getting 50 random hashes succesively.")
+            for i in range(50):
+                with lock:
+                    done += 1
+                    start = time.time()
+                    bootstrap.front().get(PyInfoHash.getRandom(), getcb, donecb)
+                    while done > 0:
+                        lock.wait()
+                        update_plot()
+                update_plot()
+            print("Took", np.sum(times), "mean", np.mean(times), "std", np.std(times), "min", np.min(times), "max", np.max(times))
+
+        print('GET calls timings benchmark test : DONE. '  \
+                'Close Matplotlib window for terminating the program.')
+        plt.ioff()
+        plt.show()
 
 if __name__ == '__main__':
 
-    parser = argparse.ArgumentParser(description='Run, test and benchmark a DHT network on a local virtual network with simulated packet loss and latency.')
-    parser.add_argument('-i', '--ifname', help='interface name', default='ethdht')
-    parser.add_argument('-n', '--node-num', help='number of dht nodes to run', type=int, default=32)
-    parser.add_argument('-v', '--virtual-locs', help='number of virtual locations (node clusters)', type=int, default=8)
-    parser.add_argument('-l', '--loss', help='simulated cluster packet loss (percent)', type=int, default=0)
-    parser.add_argument('-d', '--delay', help='simulated cluster latency (ms)', type=int, default=0)
-    parser.add_argument('-b', '--bootstrap', help='Bootstrap node to use (if any)', default=None)
-    parser.add_argument('-no4', '--disable-ipv4', help='Enable IPv4', action="store_true")
-    parser.add_argument('-no6', '--disable-ipv6', help='Enable IPv6', action="store_true")
-    parser.add_argument('--gets', action='store_true', help='Launches get calls timings benchmark test.', default=0)
-    parser.add_argument('--data-persistence', action='store_true', help='Launches data persistence benchmark test.', default=0)
+    parser = argparse.ArgumentParser(description='Run, test and benchmark a '\
+            'DHT network on a local virtual network with simulated packet '\
+            'loss and latency.')
+    ifConfArgs = parser.add_argument_group('Virtual interface configuration')
+    ifConfArgs.add_argument('-i', '--ifname', default='ethdht', help='interface name')
+    ifConfArgs.add_argument('-n', '--node-num', type=int, default=32, help='number of dht nodes to run')
+    ifConfArgs.add_argument('-v', '--virtual-locs', type=int, default=8,
+            help='number of virtual locations (node clusters)')
+    ifConfArgs.add_argument('-l', '--loss', type=int, default=0, help='simulated cluster packet loss (percent)')
+    ifConfArgs.add_argument('-d', '--delay', type=int, default=0, help='simulated cluster latency (ms)')
+    ifConfArgs.add_argument('-b', '--bootstrap', default=None, help='Bootstrap node to use (if any)')
+    ifConfArgs.add_argument('-no4', '--disable-ipv4', action="store_true", help='Enable IPv4')
+    ifConfArgs.add_argument('-no6', '--disable-ipv6', action="store_true", help='Enable IPv6')
+
+    testArgs = parser.add_argument_group('Test arguments')
+    testArgs.add_argument('-t', '--test', type=str, default=None, required=True, help='Specifies the test.')
+    testArgs.add_argument('-o', '--opt', type=str, default=[], nargs='+',
+            help='Options passed to tests routines.')
+
+    featureArgs = parser.add_mutually_exclusive_group(required=True)
+    featureArgs.add_argument('--performance', action='store_true', default=0,
+            help='Launches performance benchmark test. Available args for "-t" are: gets.')
+    featureArgs.add_argument('--data-persistence', action='store_true', default=0,
+            help='Launches data persistence benchmark test. '\
+                    'Available args for "-t" are: delete, replace, time. '\
+                    'Available args for "-o" are : dump-str-log')
+
 
     args = parser.parse_args()
-
-    if args.data_persistence + args.gets < 1:
-        print('No test specified... Quitting.', file=sys.stderr)
-        sys.exit(1)
 
     wb = WorkBench(args.ifname, args.virtual_locs, args.node_num, loss=args.loss,
             delay=args.delay, disable_ipv4=args.disable_ipv4,
@@ -458,10 +541,10 @@ if __name__ == '__main__':
         for i in range(wb.clusters):
             wb.start_cluster(i)
 
-        if args.gets:
-            getsTimesTest()
+        if args.performance:
+            PerformanceTest(args.test, *args.opt).run()
         elif args.data_persistence:
-            dataPersistenceTest()
+            PersistenceTest(args.test, *args.opt).run()
 
     except Exception as e:
         print(e)
