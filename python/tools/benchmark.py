@@ -242,12 +242,14 @@ class FeatureTest(object):
 
 class PersistenceTest(FeatureTest):
     """Docstring for PersistenceTest. """
+    global procs, bootstrap
 
     #static variables used by class callbacks
     done = 0
     lock = None
     foreign_nodes = None
     foreign_values = None
+    successfullTransfer = lambda lv,fv: len(lv) == len(fv)
 
     def __init__(self, test, *opts):
         """TODO: to be defined1.
@@ -288,19 +290,62 @@ class PersistenceTest(FeatureTest):
             PersistenceTest.done -= 1
             PersistenceTest.lock.notify()
 
-    def run(self):
+    def _dhtPut(self, producer, _hash, *values):
+        for val in values:
+            with PersistenceTest.lock:
+                bootstrap.log('[PUT]: %s' % val)
+                PersistenceTest.done += 1
+                producer.put(_hash, val, PersistenceTest.putDoneCb)
+                while PersistenceTest.done > 0:
+                    PersistenceTest.lock.wait()
+
+    def _dhtGet(self, consumer, _hash):
+        PersistenceTest.foreign_values = []
+        PersistenceTest.foreign_nodes = []
+        with PersistenceTest.lock:
+            PersistenceTest.done += 1
+            consumer.get(_hash, PersistenceTest.getcb, PersistenceTest.getDoneCb)
+            while PersistenceTest.done > 0:
+                PersistenceTest.lock.wait()
+
+    def _result(self, local_values, new_nodes):
+        if not PersistenceTest.successfullTransfer(local_values, PersistenceTest.foreign_values):
+            bootstrap.log('[GET]: Only %s on %s values persisted.' %
+                    (len(PersistenceTest.foreign_values), len(local_values)))
+        else:
+            bootstrap.log('[GET]: All values successfully persisted.')
+        if PersistenceTest.foreign_values:
+            if new_nodes:
+                bootstrap.log('Values are now newly found on:')
+                for node in new_nodes:
+                    bootstrap.log(node)
+                if self._dump_storage:
+                    serialized_req = \
+                        DhtNetworkSubProcess.DUMP_STORAGE_REQ + b' ' + \
+                                b' '.join(map(bytes, PersistenceTest.foreign_nodes))
+
+                    bootstrap.log('Dumping all storage log from '\
+                                  'hosting nodes.')
+                    for proc in procs:
+                        proc.send(serialized_req + b'\n')
+                        for line in proc.getlinesUntilNotify():
+                            DhtNetwork.log(line)
+            else:
+                bootstrap.log("Values didn't reach new hosting nodes after shutdown.")
+
+    def run(self, **opts):
         if self._test == 'delete':
-            self._deleteTest()
+            self._deleteTest(**opts)
         elif self._test == 'replace':
-            self._resplaceClusterTest()
+            self._resplaceClusterTest(**opts)
         elif self._test == 'time':
-            self._timeTest()
+            self._timeTest(**opts)
 
     #-----------
     #-  Tests  -
     #-----------
 
-    def _deleteTest(self):
+    def _deleteTest(self, **opts):
         global wb
         bootstrap = wb.get_bootstrap()
         procs = wb.procs
@@ -317,24 +362,12 @@ class PersistenceTest(FeatureTest):
 
             myhash = random_hash()
             local_values = [Value(b'foo'), Value(b'bar'), Value(b'foobar')]
-            successfullTransfer = lambda lv,fv: len(lv) == len(fv)
 
-            for val in local_values:
-                with PersistenceTest.lock:
-                    bootstrap.log('[PUT]: %s' % val)
-                    PersistenceTest.done += 1
-                    producer.put(myhash, val, PersistenceTest.putDoneCb)
-                    while PersistenceTest.done > 0:
-                        PersistenceTest.lock.wait()
+            self._dhtPut(producer, myhash, *local_values)
 
-            # checking if values were transfered.
-            with PersistenceTest.lock:
-                PersistenceTest.done += 1
-                consumer.get(myhash, PersistenceTest.getcb, PersistenceTest.getDoneCb)
-                while PersistenceTest.done > 0:
-                    PersistenceTest.lock.wait()
-
-            if not successfullTransfer(local_values, PersistenceTest.foreign_values):
+            #checking if values were transfered
+            self._dhtGet(consumer, myhash)
+            if not PersistenceTest.successfullTransfer(local_values, PersistenceTest.foreign_values):
                 if PersistenceTest.foreign_values:
                     bootstrap.log('[GET]: Only ', len(PersistenceTest.foreign_values) ,' on ',
                             len(local_values), ' values successfully put.')
@@ -356,40 +389,12 @@ class PersistenceTest(FeatureTest):
                         DhtNetwork.log(line)
 
                 # checking if values were transfered to new nodes
-                PersistenceTest.foreign_nodes_before_delete = PersistenceTest.foreign_nodes
-                PersistenceTest.foreign_nodes = []
-                PersistenceTest.foreign_values = []
-                with PersistenceTest.lock:
-                    bootstrap.log('[GET]: trying to fetch persistant values')
-                    PersistenceTest.done += 1
-                    consumer.get(myhash, PersistenceTest.getcb, PersistenceTest.getDoneCb)
-                    while PersistenceTest.done > 0:
-                        PersistenceTest.lock.wait()
+                foreign_nodes_before_delete = PersistenceTest.foreign_nodes
+                bootstrap.log('[GET]: trying to fetch persistent values')
+                self._dhtGet(consumer, myhash)
+                new_nodes = set(PersistenceTest.foreign_nodes) - set(foreign_nodes_before_delete)
 
-                new_nodes = set(PersistenceTest.foreign_nodes) - set(PersistenceTest.foreign_nodes_before_delete)
-                if not successfullTransfer(local_values, PersistenceTest.foreign_values):
-                    bootstrap.log('[GET]: Only %s on %s values persisted.' %
-                            (len(PersistenceTest.foreign_values), len(local_values)))
-                else:
-                    bootstrap.log('[GET]: All values successfully persisted.')
-                if PersistenceTest.foreign_values:
-                    if new_nodes:
-                        bootstrap.log('Values are now newly found on:')
-                        for node in new_nodes:
-                            bootstrap.log(node)
-                        if self._dump_storage:
-                            serialized_req = \
-                                DhtNetworkSubProcess.DUMP_STORAGE_REQ + b' ' + \
-                                        b' '.join(map(bytes, PersistenceTest.foreign_nodes))
-
-                            bootstrap.log('Dumping all storage log from '\
-                                          'hosting nodes.')
-                            for proc in procs:
-                                proc.send(serialized_req + b'\n')
-                                for line in proc.getlinesUntilNotify():
-                                    DhtNetwork.log(line)
-                    else:
-                        bootstrap.log("Values didn't reach new hosting nodes after shutdown.")
+                self._result(local_values, new_nodes)
             else:
                 bootstrap.log("[GET]: either couldn't fetch values or nodes hosting values...")
 
@@ -399,11 +404,11 @@ class PersistenceTest(FeatureTest):
             bootstrap.resize(1)
 
     #TODO
-    def _resplaceClusterTest(self):
+    def _resplaceClusterTest(self, **opts):
         pass
 
     #TODO
-    def _timeTest(self):
+    def _timeTest(self, **opts):
         pass
 
 class PerformanceTest(FeatureTest):
