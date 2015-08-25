@@ -102,8 +102,9 @@ class DhtNetworkSubProcess(NSPopen):
     therefor, waits for the sub process to spawn.
     """
     # requests
-    DELETE_REQ = b"del"
-    DUMP_STORAGE_REQ = b"strl"
+    SHUTDOWN_NODE_REQ    = b"sdn"
+    SHUTDOWN_CLUSTER_REQ = b"sdc"
+    DUMP_STORAGE_REQ     = b"strl"
 
     # tokens
     NOTIFY_TOKEN = 'notify'
@@ -405,7 +406,45 @@ class PersistenceTest(FeatureTest):
 
     #TODO
     def _resplaceClusterTest(self, **opts):
-        pass
+        PersistenceTest.done = 0
+        PersistenceTest.lock = threading.Condition()
+        PersistenceTest.foreign_nodes = []
+        PersistenceTest.foreign_values = []
+
+        clusters = opts['clusters'] if 'clusters' in opts else 5
+
+        try:
+            bootstrap.resize(3)
+            consumer = bootstrap.get(1)
+            producer = bootstrap.get(2)
+
+            myhash = random_hash()
+            local_values = [Value(b'foo'), Value(b'bar'), Value(b'foobar')]
+            
+            self._dhtPut(producer, myhash, *local_values)
+            self._dhtGet(consumer, myhash)
+            initial_nodes = PersistenceTest.foreign_nodes
+
+            bootstrap.log('Replacing', clusters, 'random clusters successively...')
+            for n in range(clusters):
+                proc = random.choice(procs)
+                bootstrap.log('Replacing', proc)
+                proc.send(DhtNetworkSubProcess.SHUTDOWN_CLUSTER_REQ + b'\n')
+                for line in proc.getlinesUntilNotify():
+                    DhtNetwork.log(line)
+                bootstrap.log('Waiting 5 seconds...')
+                time.sleep(5)
+
+            bootstrap.log('[GET]: trying to fetch persistent values')
+            self._dhtGet(consumer, myhash)
+            new_nodes = set(PersistenceTest.foreign_nodes) - set(initial_nodes)
+
+            self._result(local_values, new_nodes)
+
+        except Exception as e:
+            print(e)
+        finally:
+            bootstrap.resize(1)
 
     #TODO
     def _timeTest(self, **opts):

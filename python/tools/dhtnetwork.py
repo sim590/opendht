@@ -199,13 +199,19 @@ if __name__ == '__main__':
                 except queue.Empty:
                     pass
                 else:
-                    DELETE_REQ = 'del'
+                    SHUTDOWN_NODE_REQ = 'sdn'
+                    SHUTDOWN_CLUSTER_REQ = 'sdc'
                     DUMP_STORAGE_REQ = 'strl'
 
-                    if new_req[0] == DELETE_REQ:
+                    if new_req[0] in [SHUTDOWN_NODE_REQ, SHUTDOWN_CLUSTER_REQ]:
                         DhtNetwork.log('got delete request.')
-                        for n in new_req[1]:
-                            net.end_node(id=n, shutdown=True)
+                        if SHUTDOWN_NODE_REQ:
+                            for n in new_req[1]:
+                                net.end_node(id=n, shutdown=True)
+                        else:
+                            for n in net.nodes:
+                                n.end_node(shutdown=True)
+                            quit = True
                     elif new_req[0] == DUMP_STORAGE_REQ:
                         for n in [m[1] for m in net.nodes if m[1].getNodeId() in new_req[1]]:
                             net.log(n.getStorageLog())
