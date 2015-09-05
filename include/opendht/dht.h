@@ -861,7 +861,7 @@ private:
     void expireStorage();
     void storageChanged(Storage& st, ValueStorage&);
 
-    int maintainStorage(InfoHash id, bool force=false, DoneCallback donecb=nullptr);
+    size_t maintainStorage(InfoHash id, bool force=false, DoneCallback donecb=nullptr);
 
     // Buckets
     Bucket* findBucket(const InfoHash& id, sa_family_t af) {

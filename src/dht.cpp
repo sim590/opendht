@@ -318,22 +318,20 @@ Dht::RoutingTable::findClosestNodes(const InfoHash id) const {
             }
         };
 
-    if (bucket != this->end()) {
-        // Inserting very closest nodes
-        sortedBucketInsert(*bucket);
+    // Inserting very closest nodes
+    sortedBucketInsert(*bucket);
 
-        // adjacent buckets contain remaining closest candidates
-        if (std::next(bucket) != this->end() && nodes.size() < TARGET_NODES) {
-            sortedBucketInsert(*std::next(bucket));
-        }
-        if (std::prev(bucket) != this->end() && nodes.size() < TARGET_NODES) {
-            sortedBucketInsert(*std::prev(bucket));
-        }
+    // adjacent buckets contain remaining closest candidates
+    if (std::next(bucket) != this->end() && nodes.size() < TARGET_NODES) {
+        sortedBucketInsert(*std::next(bucket));
+    }
+    if (std::prev(bucket) != this->end() && nodes.size() < TARGET_NODES) {
+        sortedBucketInsert(*std::prev(bucket));
+    }
 
-        // shrink to the TARGET_NODES closest nodes.
-        if (nodes.size() > TARGET_NODES) {
-            nodes.resize(TARGET_NODES);
-        }
+    // shrink to the TARGET_NODES closest nodes.
+    if (nodes.size() > TARGET_NODES) {
+        nodes.resize(TARGET_NODES);
     }
 
     return nodes;
@@ -2249,7 +2247,7 @@ Dht::bucketMaintenance(RoutingTable& list)
     return false;
 }
 
-int
+size_t
 Dht::maintainStorage(InfoHash id, bool force, DoneCallback donecb) {
     int announce_per_af = 0;
     auto *local_storage = findStorage(id);
