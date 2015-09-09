@@ -243,16 +243,16 @@ class FeatureTest(object):
 
 class PersistenceTest(FeatureTest):
     """Docstring for PersistenceTest. """
-    global procs, bootstrap
 
     #static variables used by class callbacks
+    bootstrap = None
     done = 0
     lock = None
     foreign_nodes = None
     foreign_values = None
     successfullTransfer = lambda lv,fv: len(lv) == len(fv)
 
-    def __init__(self, test, *opts):
+    def __init__(self, test, workbench, *opts):
         """TODO: to be defined1.
 
         :test: is one of the following:
@@ -264,12 +264,15 @@ class PersistenceTest(FeatureTest):
         """
         self._test = test
 
+        self.wb = workbench
+        PersistenceTest.bootstrap = self.wb.get_bootstrap()
+
         # opts
         self._dump_storage = True if 'dump_str_log' in opts else False
 
     @staticmethod
     def getcb(value):
-        bootstrap.log('[GET]: %s' % value)
+        PersistenceTest.bootstrap.log('[GET]: %s' % value)
         PersistenceTest.foreign_values.append(value)
         return True
 
@@ -283,7 +286,7 @@ class PersistenceTest(FeatureTest):
     def getDoneCb(ok, nodes):
         with PersistenceTest.lock:
             if not ok:
-                bootstrap.log("[GET]: failed !")
+                PersistenceTest.bootstrap.log("[GET]: failed !")
             else:
                 for node in nodes:
                     if not node.getNode().isExpired():
@@ -294,7 +297,7 @@ class PersistenceTest(FeatureTest):
     def _dhtPut(self, producer, _hash, *values):
         for val in values:
             with PersistenceTest.lock:
-                bootstrap.log('[PUT]: %s' % val)
+                PersistenceTest.bootstrap.log('[PUT]: %s' % val)
                 PersistenceTest.done += 1
                 producer.put(_hash, val, PersistenceTest.putDoneCb)
                 while PersistenceTest.done > 0:
@@ -310,6 +313,7 @@ class PersistenceTest(FeatureTest):
                 PersistenceTest.lock.wait()
 
     def _result(self, local_values, new_nodes):
+        bootstrap = PersistenceTest.bootstrap
         if not PersistenceTest.successfullTransfer(local_values, PersistenceTest.foreign_values):
             bootstrap.log('[GET]: Only %s on %s values persisted.' %
                     (len(PersistenceTest.foreign_values), len(local_values)))
@@ -327,7 +331,7 @@ class PersistenceTest(FeatureTest):
 
                     bootstrap.log('Dumping all storage log from '\
                                   'hosting nodes.')
-                    for proc in procs:
+                    for proc in self.wb.procs:
                         proc.send(serialized_req + b'\n')
                         for line in proc.getlinesUntilNotify():
                             DhtNetwork.log(line)
@@ -347,14 +351,12 @@ class PersistenceTest(FeatureTest):
     #-----------
 
     def _deleteTest(self, **opts):
-        global wb
-        bootstrap = wb.get_bootstrap()
-        procs = wb.procs
-
         PersistenceTest.done = 0
         PersistenceTest.lock = threading.Condition()
         PersistenceTest.foreign_nodes = []
         PersistenceTest.foreign_values = []
+
+        bootstrap = PersistenceTest.bootstrap
 
         try:
             bootstrap.resize(3)
@@ -382,7 +384,7 @@ class PersistenceTest(FeatureTest):
 
                 bootstrap.log('Removing all nodes hosting target values...')
                 serialized_req = DhtNetworkSubProcess.SHUTDOWN_NODE_REQ  + b' ' + b' '.join(map(bytes, PersistenceTest.foreign_nodes))
-                for proc in procs:
+                for proc in self.wb.procs:
                     bootstrap.log('[REMOVE]: sending (req: "', serialized_req, '")',
                             'to', proc)
                     proc.send(serialized_req + b'\n')
@@ -412,6 +414,8 @@ class PersistenceTest(FeatureTest):
 
         clusters = opts['clusters'] if 'clusters' in opts else 5
 
+        bootstrap = PersistenceTest.bootstrap
+
         try:
             bootstrap.resize(3)
             consumer = bootstrap.get(1)
@@ -426,7 +430,7 @@ class PersistenceTest(FeatureTest):
 
             bootstrap.log('Replacing', clusters, 'random clusters successively...')
             for n in range(clusters):
-                proc = random.choice(procs)
+                proc = random.choice(self.wb.procs)
                 bootstrap.log('Replacing', proc)
                 proc.send(DhtNetworkSubProcess.SHUTDOWN_CLUSTER_REQ + b'\n')
                 for line in proc.getlinesUntilNotify():
@@ -450,6 +454,8 @@ class PersistenceTest(FeatureTest):
         PersistenceTest.lock = threading.Condition()
         PersistenceTest.foreign_nodes = []
         PersistenceTest.foreign_values = []
+
+        bootstrap = PersistenceTest.bootstrap
 
         n_producers = opts['producers'] if 'producers' in opts else 16
         hashes = []
@@ -485,10 +491,15 @@ class PersistenceTest(FeatureTest):
             bootstrap.resize(1)
 
 class PerformanceTest(FeatureTest):
-    """Docstring for PerformanceTest. """
+    """Docstring for self. """
 
-    def __init__(self, test, *opts):
+    bootstrap = None
+
+    def __init__(self, test, workbench, *opts):
         self._test = test
+
+        self.wb = workbench
+        PerformanceTest.bootstrap = wb.get_bootstrap()
 
     def run(self):
         if self._test == 'gets':
@@ -498,9 +509,7 @@ class PerformanceTest(FeatureTest):
         """TODO: Docstring for
 
         """
-        global wb
-        bootstrap = wb.get_bootstrap()
-        procs = wb.procs
+        bootstrap = PerformanceTest.bootstrap
 
         plt.ion()
 
@@ -560,7 +569,7 @@ class PerformanceTest(FeatureTest):
 
         times = []
         for n in range(10):
-            replace_cluster()
+            self.wb.replace_cluster()
             plt.pause(2)
             bootstrap.log("Getting 50 random hashes succesively.")
             for i in range(50):
@@ -625,9 +634,9 @@ if __name__ == '__main__':
             wb.start_cluster(i)
 
         if args.performance:
-            PerformanceTest(args.test, *args.opt).run()
+            PerformanceTest(args.test, wb, *args.opt).run()
         elif args.data_persistence:
-            PersistenceTest(args.test, *args.opt).run()
+            PersistenceTest(args.test, wb, *args.opt).run()
 
     except Exception as e:
         print(e)
@@ -636,7 +645,7 @@ if __name__ == '__main__':
             if p:
                 p.quit()
         bootstrap.resize(0)
-        sys.stdout.write('Shuting down the virtual IP network... ')
+        sys.stdout.write('Shutting down the virtual IP network... ')
         sys.stdout.flush()
         wb.destroy_virtual_net()
         print('Done.')
