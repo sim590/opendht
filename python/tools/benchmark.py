@@ -423,7 +423,7 @@ class PersistenceTest(FeatureTest):
 
             myhash = random_hash()
             local_values = [Value(b'foo'), Value(b'bar'), Value(b'foobar')]
-            
+
             self._dhtPut(producer, myhash, *local_values)
             self._dhtGet(consumer, myhash)
             initial_nodes = PersistenceTest.foreign_nodes

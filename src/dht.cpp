@@ -2284,8 +2284,6 @@ Dht::maintainStorage(InfoHash id, bool force, DoneCallback donecb) {
         }
     }
 
-    local_storage->maintenance_time = now + MAX_STORAGE_MAINTENANCE_EXPIRE_TIME;
-
     return announce_per_af;
 }
 
@@ -2689,6 +2687,8 @@ Dht::periodic(const uint8_t *buf, size_t buflen,
     for (auto &str : store) {
         if (now > str.maintenance_time) {
             maintainStorage(str.id);
+            str.maintenance_time = now + MAX_STORAGE_MAINTENANCE_EXPIRE_TIME;
+
         }
         storage_maintenance_time = std::min(storage_maintenance_time, str.maintenance_time);
     }
