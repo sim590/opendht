@@ -12,6 +12,8 @@ import queue
 import ipaddress
 import netifaces
 
+import numpy as np
+
 sys.path.append('..')
 from opendht import *
 
@@ -124,15 +126,28 @@ class DhtNetwork(object):
             for i in range(n, l):
                 self.end_node()
 
+    def getMessageStats(self):
+        stats = np.array([0,0,0,0,0])
+        for n in self.nodes:
+            stats +=  np.array(n[1].getNodeMessageStats())
+        stats_list = [len(self.nodes)]
+        stats_list.extend(stats.tolist())
+        return stats_list
+
 if __name__ == '__main__':
     import argparse
 
     lock = threading.Condition()
     quit = False
 
-    def notify_benchmark():
-        NOTIFY_TOKEN = 'notify'
+    def notify_benchmark(answer=None):
+        NOTIFY_TOKEN     = 'notify'
+        NOTIFY_END_TOKEN = 'notifyend'
+
         sys.stdout.write('%s\n' % NOTIFY_TOKEN)
+        for line in answer if answer else []:
+            sys.stdout.write(str(line)+'\n')
+        sys.stdout.write('%s\n' % NOTIFY_END_TOKEN)
         sys.stdout.flush()
 
     def listen_to_mother_nature(stdin, q):
@@ -195,26 +210,30 @@ if __name__ == '__main__':
             while not quit:
                 lock.wait()
                 try:
-                    new_req = q.get_nowait()
+                    req,req_args = q.get_nowait()
                 except queue.Empty:
                     pass
                 else:
-                    SHUTDOWN_NODE_REQ = 'sdn'
+                    SHUTDOWN_NODE_REQ    = 'sdn'
                     SHUTDOWN_CLUSTER_REQ = 'sdc'
-                    DUMP_STORAGE_REQ = 'strl'
+                    DUMP_STORAGE_REQ     = 'strl'
+                    MESSAGE_STATS        = 'gms'
 
-                    if new_req[0] in [SHUTDOWN_NODE_REQ, SHUTDOWN_CLUSTER_REQ]:
+                    if req in [SHUTDOWN_NODE_REQ, SHUTDOWN_CLUSTER_REQ]:
                         DhtNetwork.log('got delete request.')
                         if SHUTDOWN_NODE_REQ:
-                            for n in new_req[1]:
+                            for n in req_args:
                                 net.end_node(id=n, shutdown=True)
                         else:
                             for n in net.nodes:
                                 n.end_node(shutdown=True)
                             quit = True
-                    elif new_req[0] == DUMP_STORAGE_REQ:
-                        for n in [m[1] for m in net.nodes if m[1].getNodeId() in new_req[1]]:
+                    elif req == DUMP_STORAGE_REQ:
+                        for n in [m[1] for m in net.nodes if m[1].getNodeId() in req_args]:
                             net.log(n.getStorageLog())
+                    elif MESSAGE_STATS in req:
+                        notify_benchmark(answer=[net.getMessageStats()])
+                        continue
                     notify_benchmark()
     except Exception as e:
         DhtNetwork.log(e)

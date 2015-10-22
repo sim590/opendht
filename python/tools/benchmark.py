@@ -12,13 +12,13 @@ import threading
 import queue
 import signal
 import argparse
+import re
 
 from pyroute2.netns.process.proxy import NSPopen
 import numpy as np
 import matplotlib.pyplot as plt
 
 from dhtnetwork import DhtNetwork
-sys.path.append('..')
 from opendht import *
 
 class WorkBench():
@@ -92,6 +92,16 @@ class WorkBench():
         self.stop_cluster(n)
         self.start_cluster(n)
 
+    def resize_clusters(self, n):
+        procs_count = len(self.procs)
+        if procs_count < n:
+            for i in range(n-procs_count):
+                self.procs.append(None)
+                self.start_cluster(procs_count+i)
+        else:
+            for i in range(procs_count-n):
+                self.stop_cluster(procs_count-i-1)
+
 
 class DhtNetworkSubProcess(NSPopen):
     """
@@ -105,9 +115,12 @@ class DhtNetworkSubProcess(NSPopen):
     SHUTDOWN_NODE_REQ    = b"sdn"
     SHUTDOWN_CLUSTER_REQ = b"sdc"
     DUMP_STORAGE_REQ     = b"strl"
+    MESSAGE_STATS        = b"gms"
+    
 
     # tokens
-    NOTIFY_TOKEN = 'notify'
+    NOTIFY_TOKEN     = 'notify'
+    NOTIFY_END_TOKEN = 'notifyend'
 
     def __init__(self, ns, cmd, quit=False, **kwargs):
         super(DhtNetworkSubProcess, self).__init__(ns, cmd, **kwargs)
@@ -217,15 +230,83 @@ class DhtNetworkSubProcess(NSPopen):
                 pass
         return line
 
-    def getlinesUntilNotify(self):
+    def getlinesUntilNotify(self, answer_cb=None):
+        """
+        :answer_cb: Callback to call when an answer is given after notify. The
+                    function takes a list of lines as argument.
+        """
+        notified = False
+        answer = []
         while True:
             out = self.getline()
-            if DhtNetworkSubProcess.NOTIFY_TOKEN in out:
+            if out.split(' ')[0] == DhtNetworkSubProcess.NOTIFY_TOKEN:
+                notified = True
+            elif notified and out.split(' ')[0] == DhtNetworkSubProcess.NOTIFY_END_TOKEN:
+                if answer_cb:
+                    answer_cb(answer)
                 break
+            elif notified:
+                answer.append(out)
             elif out:
                 yield out
             else:
                 time.sleep(0.1)
+
+    def sendGetMessageStats(self):
+        """
+        Sends DhtNetwork sub process statistics request about nodes messages
+        sent.
+
+        @return: A list [num_nodes, ping, find, get, put, listen].
+        @rtype : list
+        """
+        stats = []
+        def cb(answer):
+            """
+            Callback fed to getlinesUntilNotify made to recover answer from the
+            DhtNetwork sub process.
+
+            :answer: the list of lines answered by the sub process.
+            """
+            nonlocal stats
+            if answer:
+                stats = [int(v) for v in re.findall("[0-9]+", answer.pop())]
+
+        self.send(DhtNetworkSubProcess.MESSAGE_STATS + b'\n')
+        for line in self.getlinesUntilNotify(answer_cb=cb):
+            DhtNetwork.log(line)
+
+        return stats
+
+    def sendShutdownNodes(self, ids):
+        """
+        Shutsdown nodes on the DhtNetwork sub process.
+
+        :ids: ids of nodes to shutdown.
+        """
+        serialized_req = DhtNetworkSubProcess.SHUTDOWN_NODE_REQ  + b' ' + b' '.join(map(bytes, ids))
+        self.send(serialized_req + b'\n')
+        for line in self.getlinesUntilNotify():
+            DhtNetwork.log(line)
+
+    def sendShutdown(self):
+        """
+        Shutdown the whole cluster. This does not terminate comunicating thread;
+        use quit().
+        """
+        self.send(DhtNetworkSubProcess.SHUTDOWN_CLUSTER_REQ + b'\n')
+        for line in self.getlinesUntilNotify():
+            DhtNetwork.log(line)
+
+    def sendDumpStorage(self, ids):
+        """
+        Dumps storage log from nodes with id in `ids`.
+        """
+        serialized_req = DhtNetworkSubProcess.DUMP_STORAGE_REQ + b' ' + \
+                    b' '.join(map(bytes, ids))
+        self.send(serialized_req + b'\n')
+        for line in self.getlinesUntilNotify():
+            DhtNetwork.log(line)
 
 
 def random_hash():
@@ -269,6 +350,7 @@ class PersistenceTest(FeatureTest):
 
         # opts
         self._dump_storage = True if 'dump_str_log' in opts else False
+        self._plot = True if 'plot' in opts else False
 
     @staticmethod
     def getcb(value):
@@ -325,38 +407,35 @@ class PersistenceTest(FeatureTest):
                 for node in new_nodes:
                     bootstrap.log(node)
                 if self._dump_storage:
-                    serialized_req = \
-                        DhtNetworkSubProcess.DUMP_STORAGE_REQ + b' ' + \
-                                b' '.join(map(bytes, PersistenceTest.foreign_nodes))
-
                     bootstrap.log('Dumping all storage log from '\
                                   'hosting nodes.')
+
                     for proc in self.wb.procs:
-                        proc.send(serialized_req + b'\n')
-                        for line in proc.getlinesUntilNotify():
-                            DhtNetwork.log(line)
+                        proc.sendDumpStorage(PersistenceTest.foreign_nodes)
             else:
                 bootstrap.log("Values didn't reach new hosting nodes after shutdown.")
 
-    def run(self, **opts):
+    def run(self):
         if self._test == 'delete':
-            self._deleteTest(**opts)
+            self._deleteTest()
         elif self._test == 'replace':
-            self._resplaceClusterTest(**opts)
+            self._resplaceClusterTest()
         elif self._test == 'mult_time':
-            self._multTimeTest(**opts)
+            self._multTimeTest()
 
     #-----------
     #-  Tests  -
     #-----------
 
-    def _deleteTest(self, **opts):
+    def _deleteTest(self):
         PersistenceTest.done = 0
         PersistenceTest.lock = threading.Condition()
         PersistenceTest.foreign_nodes = []
         PersistenceTest.foreign_values = []
 
         bootstrap = PersistenceTest.bootstrap
+
+        ops_count = []
 
         try:
             bootstrap.resize(3)
@@ -377,27 +456,37 @@ class PersistenceTest(FeatureTest):
                 else:
                     bootstrap.log('[GET]: 0 values successfully put')
 
+
             if PersistenceTest.foreign_values and PersistenceTest.foreign_nodes:
                 bootstrap.log('Values are found on :')
                 for node in PersistenceTest.foreign_nodes:
                     bootstrap.log(node)
 
-                bootstrap.log('Removing all nodes hosting target values...')
-                serialized_req = DhtNetworkSubProcess.SHUTDOWN_NODE_REQ  + b' ' + b' '.join(map(bytes, PersistenceTest.foreign_nodes))
-                for proc in self.wb.procs:
-                    bootstrap.log('[REMOVE]: sending (req: "', serialized_req, '")',
-                            'to', proc)
-                    proc.send(serialized_req + b'\n')
-                    for line in proc.getlinesUntilNotify():
-                        DhtNetwork.log(line)
 
-                # checking if values were transfered to new nodes
-                foreign_nodes_before_delete = PersistenceTest.foreign_nodes
-                bootstrap.log('[GET]: trying to fetch persistent values')
-                self._dhtGet(consumer, myhash)
-                new_nodes = set(PersistenceTest.foreign_nodes) - set(foreign_nodes_before_delete)
+                for _ in range(max(1, int(self.wb.node_num/32))):
+                    bootstrap.log('Removing all nodes hosting target values...')
+                    for proc in self.wb.procs:
+                        cluster_ops_count = 0
+                        bootstrap.log('[REMOVE]: sending delete request to', proc)
+                        proc.sendShutdownNodes(PersistenceTest.foreign_nodes)
+                        bootstrap.log('sending message stats request')
+                        stats = proc.sendGetMessageStats()
+                        cluster_ops_count += sum(stats[1:])
+                    ops_count.append(cluster_ops_count/self.wb.node_per_loc)
+                    
+                    # checking if values were transfered to new nodes
+                    foreign_nodes_before_delete = PersistenceTest.foreign_nodes
+                    bootstrap.log('[GET]: trying to fetch persistent values')
+                    self._dhtGet(consumer, myhash)
+                    new_nodes = set(PersistenceTest.foreign_nodes) - set(foreign_nodes_before_delete)
+                    
+                    self._result(local_values, new_nodes)
 
-                self._result(local_values, new_nodes)
+                if self._plot:
+                    plt.plot(ops_count, color='blue')
+                    plt.draw()
+                    plt.ioff()
+                    plt.show()
             else:
                 bootstrap.log("[GET]: either couldn't fetch values or nodes hosting values...")
 
@@ -406,7 +495,7 @@ class PersistenceTest(FeatureTest):
         finally:
             bootstrap.resize(1)
 
-    def _resplaceClusterTest(self, **opts):
+    def _resplaceClusterTest(self):
         PersistenceTest.done = 0
         PersistenceTest.lock = threading.Condition()
         PersistenceTest.foreign_nodes = []
@@ -430,13 +519,12 @@ class PersistenceTest(FeatureTest):
 
             bootstrap.log('Replacing', clusters, 'random clusters successively...')
             for n in range(clusters):
-                proc = random.choice(self.wb.procs)
+                i = random.randint(0, len(self.wb.procs)-1)
+                proc = self.wb.procs[i]
                 bootstrap.log('Replacing', proc)
-                proc.send(DhtNetworkSubProcess.SHUTDOWN_CLUSTER_REQ + b'\n')
-                for line in proc.getlinesUntilNotify():
-                    DhtNetwork.log(line)
-                bootstrap.log('Waiting 5 seconds...')
-                time.sleep(5)
+                proc.sendShutdown()
+                self.wb.stop_cluster(i)
+                self.wb.start_cluster(i)
 
             bootstrap.log('[GET]: trying to fetch persistent values')
             self._dhtGet(consumer, myhash)
@@ -449,12 +537,11 @@ class PersistenceTest(FeatureTest):
         finally:
             bootstrap.resize(1)
 
-    def _multTimeTest(self, **opts):
+    def _multTimeTest(self):
         PersistenceTest.done = 0
         PersistenceTest.lock = threading.Condition()
         PersistenceTest.foreign_nodes = []
         PersistenceTest.foreign_values = []
-
         bootstrap = PersistenceTest.bootstrap
 
         n_producers = opts['producers'] if 'producers' in opts else 16
