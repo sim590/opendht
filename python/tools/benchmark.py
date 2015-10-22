@@ -2,13 +2,23 @@
 # Copyright (C) 2015 Savoir-Faire Linux Inc.
 # Author: Adrien Béraud <adrien.beraud@savoirfairelinux.com>
 
-import sys, subprocess, argparse, time, random, string, threading, signal
+import os
+import sys
+import subprocess
+import time
+import random
+import string
+import threading
+import queue
+import signal
+import argparse
+import re
+
 from pyroute2.netns.process.proxy import NSPopen
 import numpy as np
 import matplotlib.pyplot as plt
-from dhtnetwork import DhtNetwork
 
-sys.path.append('..')
+from dhtnetwork import DhtNetwork
 from opendht import *
 
 class WorkBench():
@@ -62,16 +72,17 @@ class WorkBench():
                     cmd.extend(['-b', self.local_bootstrap.ip4])
                 if not self.disable_ipv6 and self.local_bootstrap.ip6:
                     cmd.extend(['-b6', self.local_bootstrap.ip6])
-            self.procs[i] = NSPopen('node'+str(i), cmd)
+            self.procs[i] = DhtNetworkSubProcess('node'+str(i), cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            while DhtNetworkSubProcess.NOTIFY_TOKEN not in self.procs[i].getline():
+                # waiting for process to spawn
+                time.sleep(0.5)
         else:
             raise Exception('First create bootstrap.')
 
     def stop_cluster(self, i):
         if self.procs[i]:
             try:
-                self.procs[i].send_signal(signal.SIGINT);
-                self.procs[i].wait()
-                self.procs[i].release()
+                self.procs[i].quit()
             except Exception as e:
                 print(e)
             self.procs[i] = None
@@ -81,107 +92,632 @@ class WorkBench():
         self.stop_cluster(n)
         self.start_cluster(n)
 
+    def resize_clusters(self, n):
+        procs_count = len(self.procs)
+        if procs_count < n:
+            for i in range(n-procs_count):
+                self.procs.append(None)
+                self.start_cluster(procs_count+i)
+        else:
+            for i in range(procs_count-n):
+                self.stop_cluster(procs_count-i-1)
 
 
-def getsTimesTest():
-    """TODO: Docstring for
-
+class DhtNetworkSubProcess(NSPopen):
     """
+    Handles communication with DhtNetwork sub process.
 
-    plt.ion()
+    When instanciated, the object's thread is started and will read the sub
+    process' stdout until it finds 'DhtNetworkSubProcess.NOTIFY_TOKEN' token,
+    therefor, waits for the sub process to spawn.
+    """
+    # requests
+    SHUTDOWN_NODE_REQ    = b"sdn"
+    SHUTDOWN_CLUSTER_REQ = b"sdc"
+    DUMP_STORAGE_REQ     = b"strl"
+    MESSAGE_STATS        = b"gms"
+    
 
-    fig, axes = plt.subplots(2, 1)
-    fig.tight_layout()
+    # tokens
+    NOTIFY_TOKEN     = 'notify'
+    NOTIFY_END_TOKEN = 'notifyend'
 
-    lax = axes[0]
-    hax = axes[1]
+    def __init__(self, ns, cmd, quit=False, **kwargs):
+        super(DhtNetworkSubProcess, self).__init__(ns, cmd, **kwargs)
+        self._setStdoutFlags()
+        self._virtual_ns = ns
 
-    lines = None#ax.plot([])
-    #plt.ylabel('time (s)')
-    hax.set_ylim(0, 2)
+        self._quit = quit
+        self._lock = threading.Condition()
+        self._in_queue = queue.Queue()
+        self._out_queue = queue.Queue()
 
-    # let the network stabilise
-    plt.pause(60)
+        # starting thread
+        self._thread = threading.Thread(target=self._communicate)
+        self._thread.daemon = True
+        self._thread.start()
 
-    #start = time.time()
-    times = []
+    def __repr__(self):
+        return 'DhtNetwork on virtual namespace "%s"' % self._virtual_ns
+
+    def _setStdoutFlags(self):
+        """
+        Sets non-blocking read flags for subprocess stdout file descriptor.
+        """
+        import fcntl
+        flags = self.stdout.fcntl(fcntl.F_GETFL)
+        self.stdout.fcntl(fcntl.F_SETFL, flags | os.O_NDELAY)
+
+    def _communicate(self):
+        """
+        Communication thread. This reads and writes to the sub process.
+        """
+        ENCODING = 'utf-8'
+        sleep_time = 0.1
+        stdin_line, stdout_line = '', ''
+
+        # first read of process living. Expecting NOTIFY_TOKEN
+        while DhtNetworkSubProcess.NOTIFY_TOKEN not in stdout_line:
+            stdout_line = self.stdout.readline().decode()
+            time.sleep(sleep_time)
+
+        with self._lock:
+            self._out_queue.put(stdout_line)
+
+        while not self._quit:
+            with self._lock:
+                try:
+                    stdin_line = self._in_queue.get_nowait()
+
+                    # sending data to sub process
+                    self.stdin.write(stdin_line if isinstance(stdin_line, bytes) else
+                            bytes(str(stdin_line), encoding=ENCODING))
+                    self.stdin.flush()
+                except queue.Empty:
+                    #waiting for next stdin req to send
+                    self._lock.wait(timeout=sleep_time)
+
+            # reading response from sub process
+            for stdout_line in iter(self.stdout.readline, b''):
+                stdout_line = stdout_line.decode().replace('\n', '')
+                if stdout_line:
+                    with self._lock:
+                        self._out_queue.put(stdout_line)
+
+        with self._lock:
+            self._lock.notify()
+
+    def stop_communicating(self):
+        """
+        Stops the I/O thread from communicating with the subprocess.
+        """
+        if not self._quit:
+            self._quit = True
+            with self._lock:
+                self._lock.notify()
+                self._lock.wait()
+
+    def quit(self):
+        """
+        Notifies thread and sub process to terminate. This is blocking call
+        until the sub process finishes.
+        """
+        self.stop_communicating()
+        self.send_signal(signal.SIGINT);
+        self.wait()
+        self.release()
+
+    def send(self, msg):
+        """
+        Send data to sub process.
+        """
+        with self._lock:
+            self._in_queue.put(msg)
+            self._lock.notify()
+
+    def getline(self):
+        """
+        Read line from sub process.
+
+        @return:  A line on sub process' stdout.
+        @rtype :  str
+        """
+        line = ''
+        with self._lock:
+            try:
+                line = self._out_queue.get_nowait()
+            except queue.Empty:
+                pass
+        return line
+
+    def getlinesUntilNotify(self, answer_cb=None):
+        """
+        :answer_cb: Callback to call when an answer is given after notify. The
+                    function takes a list of lines as argument.
+        """
+        notified = False
+        answer = []
+        while True:
+            out = self.getline()
+            if out.split(' ')[0] == DhtNetworkSubProcess.NOTIFY_TOKEN:
+                notified = True
+            elif notified and out.split(' ')[0] == DhtNetworkSubProcess.NOTIFY_END_TOKEN:
+                if answer_cb:
+                    answer_cb(answer)
+                break
+            elif notified:
+                answer.append(out)
+            elif out:
+                yield out
+            else:
+                time.sleep(0.1)
+
+    def sendGetMessageStats(self):
+        """
+        Sends DhtNetwork sub process statistics request about nodes messages
+        sent.
+
+        @return: A list [num_nodes, ping, find, get, put, listen].
+        @rtype : list
+        """
+        stats = []
+        def cb(answer):
+            """
+            Callback fed to getlinesUntilNotify made to recover answer from the
+            DhtNetwork sub process.
+
+            :answer: the list of lines answered by the sub process.
+            """
+            nonlocal stats
+            if answer:
+                stats = [int(v) for v in re.findall("[0-9]+", answer.pop())]
+
+        self.send(DhtNetworkSubProcess.MESSAGE_STATS + b'\n')
+        for line in self.getlinesUntilNotify(answer_cb=cb):
+            DhtNetwork.log(line)
+
+        return stats
+
+    def sendShutdownNodes(self, ids):
+        """
+        Shutsdown nodes on the DhtNetwork sub process.
+
+        :ids: ids of nodes to shutdown.
+        """
+        serialized_req = DhtNetworkSubProcess.SHUTDOWN_NODE_REQ  + b' ' + b' '.join(map(bytes, ids))
+        self.send(serialized_req + b'\n')
+        for line in self.getlinesUntilNotify():
+            DhtNetwork.log(line)
+
+    def sendShutdown(self):
+        """
+        Shutdown the whole cluster. This does not terminate comunicating thread;
+        use quit().
+        """
+        self.send(DhtNetworkSubProcess.SHUTDOWN_CLUSTER_REQ + b'\n')
+        for line in self.getlinesUntilNotify():
+            DhtNetwork.log(line)
+
+    def sendDumpStorage(self, ids):
+        """
+        Dumps storage log from nodes with id in `ids`.
+        """
+        serialized_req = DhtNetworkSubProcess.DUMP_STORAGE_REQ + b' ' + \
+                    b' '.join(map(bytes, ids))
+        self.send(serialized_req + b'\n')
+        for line in self.getlinesUntilNotify():
+            DhtNetwork.log(line)
+
+
+def random_hash():
+    return InfoHash(''.join(random.SystemRandom().choice(string.hexdigits) for _ in range(40)).encode())
+
+class FeatureTest(object):
+
+    """A feature test is executed """
+
+    def __init__(self):
+        """TODO: to be defined1. """
+
+    def run(self):
+        raise NotImplementedError('This method must be implemented.')
+
+class PersistenceTest(FeatureTest):
+    """Docstring for PersistenceTest. """
+
+    #static variables used by class callbacks
+    bootstrap = None
     done = 0
+    lock = None
+    foreign_nodes = None
+    foreign_values = None
+    successfullTransfer = lambda lv,fv: len(lv) == len(fv)
 
-    lock = threading.Condition()
+    def __init__(self, test, workbench, *opts):
+        """TODO: to be defined1.
 
-    def getcb(v):
-        print("found", v)
+        :test: is one of the following:
+                - 'mult_time': test persistence of data based on internal OpenDHT
+                  storage maintenance timings.
+                - 'delete': test persistence of data upon deletion of nodes.
+                - 'replace': replacing cluster successively.
+        :dump_storage: TODO
+        """
+        self._test = test
+
+        self.wb = workbench
+        PersistenceTest.bootstrap = self.wb.get_bootstrap()
+
+        # opts
+        self._dump_storage = True if 'dump_str_log' in opts else False
+        self._plot = True if 'plot' in opts else False
+
+    @staticmethod
+    def getcb(value):
+        PersistenceTest.bootstrap.log('[GET]: %s' % value)
+        PersistenceTest.foreign_values.append(value)
         return True
 
-    def donecb(ok, nodes):
-        nonlocal lock, done, times
-        t = time.time()-start
-        with lock:
+    @staticmethod
+    def putDoneCb(ok, nodes):
+        with PersistenceTest.lock:
+            PersistenceTest.done -= 1
+            PersistenceTest.lock.notify()
+
+    @staticmethod
+    def getDoneCb(ok, nodes):
+        with PersistenceTest.lock:
             if not ok:
-                print("failed !")
-            times.append(t)
-            done -= 1
-            lock.notify()
+                PersistenceTest.bootstrap.log("[GET]: failed !")
+            else:
+                for node in nodes:
+                    if not node.getNode().isExpired():
+                        PersistenceTest.foreign_nodes.append(node.getId().toString())
+            PersistenceTest.done -= 1
+            PersistenceTest.lock.notify()
 
-    def update_plot():
-        nonlocal lines
-        while lines:
-            l = lines.pop()
-            l.remove()
-            del l
-        lines = plt.plot(times, color='blue')
-        plt.draw()
+    def _dhtPut(self, producer, _hash, *values):
+        for val in values:
+            with PersistenceTest.lock:
+                PersistenceTest.bootstrap.log('[PUT]: %s' % val)
+                PersistenceTest.done += 1
+                producer.put(_hash, val, PersistenceTest.putDoneCb)
+                while PersistenceTest.done > 0:
+                    PersistenceTest.lock.wait()
 
-    def run_get():
-        nonlocal done
-        done += 1
-        start = time.time()
-        bootstrap.front().get(InfoHash.getRandom(), getcb, lambda ok, nodes: donecb(ok, nodes, start))
+    def _dhtGet(self, consumer, _hash):
+        PersistenceTest.foreign_values = []
+        PersistenceTest.foreign_nodes = []
+        with PersistenceTest.lock:
+            PersistenceTest.done += 1
+            consumer.get(_hash, PersistenceTest.getcb, PersistenceTest.getDoneCb)
+            while PersistenceTest.done > 0:
+                PersistenceTest.lock.wait()
 
-    plt.pause(5)
+    def _result(self, local_values, new_nodes):
+        bootstrap = PersistenceTest.bootstrap
+        if not PersistenceTest.successfullTransfer(local_values, PersistenceTest.foreign_values):
+            bootstrap.log('[GET]: Only %s on %s values persisted.' %
+                    (len(PersistenceTest.foreign_values), len(local_values)))
+        else:
+            bootstrap.log('[GET]: All values successfully persisted.')
+        if PersistenceTest.foreign_values:
+            if new_nodes:
+                bootstrap.log('Values are now newly found on:')
+                for node in new_nodes:
+                    bootstrap.log(node)
+                if self._dump_storage:
+                    bootstrap.log('Dumping all storage log from '\
+                                  'hosting nodes.')
 
-    plt.show()
-    update_plot()
+                    for proc in self.wb.procs:
+                        proc.sendDumpStorage(PersistenceTest.foreign_nodes)
+            else:
+                bootstrap.log("Values didn't reach new hosting nodes after shutdown.")
 
-    times = []
-    for n in range(10):
-        wb.replace_cluster()
-        plt.pause(2)
-        print("Getting 50 random hashes succesively.")
-        for i in range(50):
+    def run(self):
+        if self._test == 'delete':
+            self._deleteTest()
+        elif self._test == 'replace':
+            self._resplaceClusterTest()
+        elif self._test == 'mult_time':
+            self._multTimeTest()
+
+    #-----------
+    #-  Tests  -
+    #-----------
+
+    def _deleteTest(self):
+        PersistenceTest.done = 0
+        PersistenceTest.lock = threading.Condition()
+        PersistenceTest.foreign_nodes = []
+        PersistenceTest.foreign_values = []
+
+        bootstrap = PersistenceTest.bootstrap
+
+        ops_count = []
+
+        try:
+            bootstrap.resize(3)
+            consumer = bootstrap.get(1)
+            producer = bootstrap.get(2)
+
+            myhash = random_hash()
+            local_values = [Value(b'foo'), Value(b'bar'), Value(b'foobar')]
+
+            self._dhtPut(producer, myhash, *local_values)
+
+            #checking if values were transfered
+            self._dhtGet(consumer, myhash)
+            if not PersistenceTest.successfullTransfer(local_values, PersistenceTest.foreign_values):
+                if PersistenceTest.foreign_values:
+                    bootstrap.log('[GET]: Only ', len(PersistenceTest.foreign_values) ,' on ',
+                            len(local_values), ' values successfully put.')
+                else:
+                    bootstrap.log('[GET]: 0 values successfully put')
+
+
+            if PersistenceTest.foreign_values and PersistenceTest.foreign_nodes:
+                bootstrap.log('Values are found on :')
+                for node in PersistenceTest.foreign_nodes:
+                    bootstrap.log(node)
+
+
+                for _ in range(max(1, int(self.wb.node_num/32))):
+                    bootstrap.log('Removing all nodes hosting target values...')
+                    for proc in self.wb.procs:
+                        cluster_ops_count = 0
+                        bootstrap.log('[REMOVE]: sending delete request to', proc)
+                        proc.sendShutdownNodes(PersistenceTest.foreign_nodes)
+                        bootstrap.log('sending message stats request')
+                        stats = proc.sendGetMessageStats()
+                        cluster_ops_count += sum(stats[1:])
+                    ops_count.append(cluster_ops_count/self.wb.node_per_loc)
+                    
+                    # checking if values were transfered to new nodes
+                    foreign_nodes_before_delete = PersistenceTest.foreign_nodes
+                    bootstrap.log('[GET]: trying to fetch persistent values')
+                    self._dhtGet(consumer, myhash)
+                    new_nodes = set(PersistenceTest.foreign_nodes) - set(foreign_nodes_before_delete)
+                    
+                    self._result(local_values, new_nodes)
+
+                if self._plot:
+                    plt.plot(ops_count, color='blue')
+                    plt.draw()
+                    plt.ioff()
+                    plt.show()
+            else:
+                bootstrap.log("[GET]: either couldn't fetch values or nodes hosting values...")
+
+        except Exception as e:
+            print(e)
+        finally:
+            bootstrap.resize(1)
+
+    def _resplaceClusterTest(self):
+        PersistenceTest.done = 0
+        PersistenceTest.lock = threading.Condition()
+        PersistenceTest.foreign_nodes = []
+        PersistenceTest.foreign_values = []
+
+        clusters = opts['clusters'] if 'clusters' in opts else 5
+
+        bootstrap = PersistenceTest.bootstrap
+
+        try:
+            bootstrap.resize(3)
+            consumer = bootstrap.get(1)
+            producer = bootstrap.get(2)
+
+            myhash = random_hash()
+            local_values = [Value(b'foo'), Value(b'bar'), Value(b'foobar')]
+
+            self._dhtPut(producer, myhash, *local_values)
+            self._dhtGet(consumer, myhash)
+            initial_nodes = PersistenceTest.foreign_nodes
+
+            bootstrap.log('Replacing', clusters, 'random clusters successively...')
+            for n in range(clusters):
+                i = random.randint(0, len(self.wb.procs)-1)
+                proc = self.wb.procs[i]
+                bootstrap.log('Replacing', proc)
+                proc.sendShutdown()
+                self.wb.stop_cluster(i)
+                self.wb.start_cluster(i)
+
+            bootstrap.log('[GET]: trying to fetch persistent values')
+            self._dhtGet(consumer, myhash)
+            new_nodes = set(PersistenceTest.foreign_nodes) - set(initial_nodes)
+
+            self._result(local_values, new_nodes)
+
+        except Exception as e:
+            print(e)
+        finally:
+            bootstrap.resize(1)
+
+    def _multTimeTest(self):
+        PersistenceTest.done = 0
+        PersistenceTest.lock = threading.Condition()
+        PersistenceTest.foreign_nodes = []
+        PersistenceTest.foreign_values = []
+        bootstrap = PersistenceTest.bootstrap
+
+        n_producers = opts['producers'] if 'producers' in opts else 16
+
+        # this node count is appropriate in order to garantee non-producer nodes
+        # will host values.
+        EFFICIENT_NODE_NUM = 8*n_producers if 8*n_producers > 1024 else 1024
+        self.wb.resize_clusters(EFFICIENT_NODE_NUM/self.wb.node_per_loc-self.wb.clusters)
+
+        hashes = []
+        values = [Value(b'foo')]
+        nodes = set([])
+
+        try:
+            #self.wb.resize_clusters()
+            bootstrap.resize(n_producers+2)
+            consumer = bootstrap.get(1)
+            producers = (bootstrap.get(n) for n in range(2,n_producers+2))
+            for p in producers:
+                hashes.append(random_hash())
+                self._dhtPut(p, hashes[-1], *values)
+
+            for h in hashes:
+                self._dhtGet(consumer, h)
+                for n in PersistenceTest.foreign_nodes:
+                    nodes.add(n)
+
+            for _hash in hashes:
+                for _ in range(8):
+                    #TODO: créer un nœud avec un hash près de `_hash`
+                    pass
+
+            bootstrap.log('Waiting 10 minutes for normal storage maintenance.')
+            time.sleep(10*60)
+
+            nodes_after_time = set([])
+            for h in hashes:
+                self._dhtGet(consumer, h)
+                for n in PersistenceTest.foreign_nodes:
+                    nodes_after_time.add(n)
+            self._result(values, nodes_after_time - nodes)
+
+        except Exception as e:
+            print(e)
+        finally:
+            bootstrap.resize(1)
+
+class PerformanceTest(FeatureTest):
+    """Docstring for self. """
+
+    bootstrap = None
+
+    def __init__(self, test, workbench, *opts):
+        self._test = test
+
+        self.wb = workbench
+        PerformanceTest.bootstrap = wb.get_bootstrap()
+
+    def run(self):
+        if self._test == 'gets':
+            self._getsTimesTest()
+
+    def _getsTimesTest(self):
+        """TODO: Docstring for
+
+        """
+        bootstrap = PerformanceTest.bootstrap
+
+        plt.ion()
+
+        fig, axes = plt.subplots(2, 1)
+        fig.tight_layout()
+
+        lax = axes[0]
+        hax = axes[1]
+
+        lines = None#ax.plot([])
+        #plt.ylabel('time (s)')
+        hax.set_ylim(0, 2)
+
+        # let the network stabilise
+        plt.pause(60)
+
+        #start = time.time()
+        times = []
+
+        lock = threading.Condition()
+        done = 0
+
+        def getcb(v):
+            nonlocal bootstrap
+            bootstrap.log("found", v)
+            return True
+
+        def donecb(ok, nodes):
+            nonlocal bootstrap, lock, done, times
+            t = time.time()-start
             with lock:
-                done += 1
-                start = time.time()
-                bootstrap.front().get(InfoHash.getRandom(), getcb, donecb)
-                while done > 0:
-                    lock.wait()
-                    update_plot()
-            update_plot()
-        print("Took", np.sum(times), "mean", np.mean(times), "std", np.std(times), "min", np.min(times), "max", np.max(times))
+                if not ok:
+                    bootstrap.log("failed !")
+                times.append(t)
+                done -= 1
+                lock.notify()
 
-    print('GET calls timings benchmark test : DONE. '  \
-            'Close Matplotlib window for terminating the program.')
-    plt.ioff()
-    plt.show()
+        def update_plot():
+            nonlocal lines
+            while lines:
+                l = lines.pop()
+                l.remove()
+                del l
+            lines = plt.plot(times, color='blue')
+            plt.draw()
+
+        def run_get():
+            nonlocal done
+            done += 1
+            start = time.time()
+            bootstrap.front().get(InfoHash.getRandom(), getcb, lambda ok, nodes: donecb(ok, nodes, start))
+
+        plt.pause(5)
+
+        plt.show()
+        update_plot()
+
+        times = []
+        for n in range(10):
+            self.wb.replace_cluster()
+            plt.pause(2)
+            bootstrap.log("Getting 50 random hashes succesively.")
+            for i in range(50):
+                with lock:
+                    done += 1
+                    start = time.time()
+                    bootstrap.front().get(PyInfoHash.getRandom(), getcb, donecb)
+                    while done > 0:
+                        lock.wait()
+                        update_plot()
+                update_plot()
+            print("Took", np.sum(times), "mean", np.mean(times), "std", np.std(times), "min", np.min(times), "max", np.max(times))
+
+        print('GET calls timings benchmark test : DONE. '  \
+                'Close Matplotlib window for terminating the program.')
+        plt.ioff()
+        plt.show()
 
 if __name__ == '__main__':
 
-    parser = argparse.ArgumentParser(description='Run, test and benchmark a DHT network on a local virtual network with simulated packet loss and latency.')
-    parser.add_argument('-i', '--ifname', help='interface name', default='ethdht')
-    parser.add_argument('-n', '--node-num', help='number of dht nodes to run', type=int, default=32)
-    parser.add_argument('-v', '--virtual-locs', help='number of virtual locations (node clusters)', type=int, default=8)
-    parser.add_argument('-l', '--loss', help='simulated cluster packet loss (percent)', type=int, default=0)
-    parser.add_argument('-d', '--delay', help='simulated cluster latency (ms)', type=int, default=0)
-    parser.add_argument('-b', '--bootstrap', help='Bootstrap node to use (if any)', default=None)
-    parser.add_argument('-no4', '--disable-ipv4', help='Enable IPv4', action="store_true")
-    parser.add_argument('-no6', '--disable-ipv6', help='Enable IPv6', action="store_true")
-    parser.add_argument('--gets', action='store_true', help='Launches get calls timings benchmark test.', default=0)
+    parser = argparse.ArgumentParser(description='Run, test and benchmark a '\
+            'DHT network on a local virtual network with simulated packet '\
+            'loss and latency.')
+    ifConfArgs = parser.add_argument_group('Virtual interface configuration')
+    ifConfArgs.add_argument('-i', '--ifname', default='ethdht', help='interface name')
+    ifConfArgs.add_argument('-n', '--node-num', type=int, default=32, help='number of dht nodes to run')
+    ifConfArgs.add_argument('-v', '--virtual-locs', type=int, default=8,
+            help='number of virtual locations (node clusters)')
+    ifConfArgs.add_argument('-l', '--loss', type=int, default=0, help='simulated cluster packet loss (percent)')
+    ifConfArgs.add_argument('-d', '--delay', type=int, default=0, help='simulated cluster latency (ms)')
+    ifConfArgs.add_argument('-b', '--bootstrap', default=None, help='Bootstrap node to use (if any)')
+    ifConfArgs.add_argument('-no4', '--disable-ipv4', action="store_true", help='Enable IPv4')
+    ifConfArgs.add_argument('-no6', '--disable-ipv6', action="store_true", help='Enable IPv6')
+
+    testArgs = parser.add_argument_group('Test arguments')
+    testArgs.add_argument('-t', '--test', type=str, default=None, required=True, help='Specifies the test.')
+    testArgs.add_argument('-o', '--opt', type=str, default=[], nargs='+',
+            help='Options passed to tests routines.')
+
+    featureArgs = parser.add_mutually_exclusive_group(required=True)
+    featureArgs.add_argument('--performance', action='store_true', default=0,
+            help='Launches performance benchmark test. Available args for "-t" are: gets.')
+    featureArgs.add_argument('--data-persistence', action='store_true', default=0,
+            help='Launches data persistence benchmark test. '\
+                    'Available args for "-t" are: delete, replace, mult_time. '\
+                    'Available args for "-o" are : dump_str_log')
+
 
     args = parser.parse_args()
-
-    if args.gets < 1:
-        print('No test specified... Quitting.', file=sys.stderr)
-        sys.exit(1)
 
     wb = WorkBench(args.ifname, args.virtual_locs, args.node_num, loss=args.loss,
             delay=args.delay, disable_ipv4=args.disable_ipv4,
@@ -196,21 +732,19 @@ if __name__ == '__main__':
         for i in range(wb.clusters):
             wb.start_cluster(i)
 
-        if args.gets:
-            getsTimesTest()
+        if args.performance:
+            PerformanceTest(args.test, wb, *args.opt).run()
+        elif args.data_persistence:
+            PersistenceTest(args.test, wb, *args.opt).run()
 
     except Exception as e:
         print(e)
     finally:
         for p in wb.procs:
             if p:
-                p.send_signal(signal.SIGINT);
+                p.quit()
         bootstrap.resize(0)
+        sys.stdout.write('Shutting down the virtual IP network... ')
+        sys.stdout.flush()
         wb.destroy_virtual_net()
-        for p in wb.procs:
-            if p:
-                try:
-                    p.wait()
-                    p.release()
-                except Exception as e:
-                    print(e)
+        print('Done.')

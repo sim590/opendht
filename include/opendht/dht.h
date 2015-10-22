@@ -133,6 +133,7 @@ public:
 
     typedef std::function<bool(const std::vector<std::shared_ptr<Value>>& values)> GetCallback;
     typedef std::function<bool(std::shared_ptr<Value> value)> GetCallbackSimple;
+    typedef std::function<void()> ShutdownCallback;
 
     typedef bool (*GetCallbackRaw)(std::shared_ptr<Value>, void *user_data);
 
@@ -156,9 +157,14 @@ public:
 
     typedef std::function<void(bool success, const std::vector<std::shared_ptr<Node>>& nodes)> DoneCallback;
     typedef void (*DoneCallbackRaw)(bool, std::vector<std::shared_ptr<Node>>*, void *user_data);
+    typedef void (*ShutdownCallbackRaw)(void *user_data);
 
     typedef std::function<void(bool success)> DoneCallbackSimple;
 
+    static ShutdownCallback
+    bindShutdownCb(ShutdownCallbackRaw shutdown_cb_raw, void* user_data) {
+        return [=]() { shutdown_cb_raw(user_data); };
+    }
     static DoneCallback
     bindDoneCb(DoneCallbackSimple donecb) {
         if (not donecb) return {};
@@ -199,6 +205,11 @@ public:
     }
 
     /**
+     * Performs final operations before quitting.
+     */
+    void shutdown(ShutdownCallback cb);
+
+    /**
      * Returns true if the node is running (have access to an open socket).
      *
      *  af: address family. If non-zero, will return true if the node
@@ -230,6 +241,13 @@ public:
     }
 
     int pingNode(const sockaddr*, socklen_t);
+
+    /**
+     * Maintains the store. For each storage, if values don't belong there
+     * anymore because this node is too far from the target, values are sent to
+     * the appropriate nodes.
+     */
+    void maintainStore(bool force=false);
 
     time_point periodic(const uint8_t *buf, size_t buflen, const sockaddr *from, socklen_t fromlen);
 
@@ -274,16 +292,16 @@ public:
      * reannounced on a regular basis.
      * User can call #cancelPut(InfoHash, Value::Id) to cancel a put operation.
      */
-    void put(const InfoHash& key, std::shared_ptr<Value>, DoneCallback cb=nullptr);
-    void put(const InfoHash& key, const std::shared_ptr<Value>& v, DoneCallbackSimple cb) {
-        put(key, v, bindDoneCb(cb));
+    void put(const InfoHash& key, std::shared_ptr<Value>, DoneCallback cb=nullptr, time_point created=time_point::max());
+    void put(const InfoHash& key, const std::shared_ptr<Value>& v, DoneCallbackSimple cb, time_point created=time_point::max()) {
+        put(key, v, bindDoneCb(cb), created);
     }
 
-    void put(const InfoHash& key, Value&& v, DoneCallback cb=nullptr) {
-        put(key, std::make_shared<Value>(std::move(v)), cb);
+    void put(const InfoHash& key, Value&& v, DoneCallback cb=nullptr, time_point created=time_point::max()) {
+        put(key, std::make_shared<Value>(std::move(v)), cb, created);
     }
-    void put(const InfoHash& key, Value&& v, DoneCallbackSimple cb) {
-        put(key, std::forward<Value>(v), bindDoneCb(cb));
+    void put(const InfoHash& key, Value&& v, DoneCallbackSimple cb, time_point created=time_point::max()) {
+        put(key, std::forward<Value>(v), bindDoneCb(cb), created);
     }
 
     /**
@@ -377,6 +395,8 @@ private:
        a search in case of no answers. */
     static constexpr std::chrono::seconds SEARCH_GET_STEP {3};
 
+    static constexpr std::chrono::minutes MAX_STORAGE_MAINTENANCE_EXPIRE_TIME {10};
+
     /* The time after which we consider a search to be expirable. */
     static constexpr std::chrono::minutes SEARCH_EXPIRE_TIME {62};
 
@@ -426,6 +446,8 @@ private:
         using std::list<Bucket>::list;
 
         InfoHash middle(const RoutingTable::const_iterator&) const;
+
+        std::vector<std::shared_ptr<Node>> findClosestNodes(const InfoHash id) const;
 
         RoutingTable::iterator findBucket(const InfoHash& id);
         RoutingTable::const_iterator findBucket(const InfoHash& id) const;
@@ -551,6 +573,7 @@ private:
      */
     struct Announce {
         std::shared_ptr<Value> value;
+        time_point created;
         DoneCallback callback;
     };
 
@@ -664,13 +687,15 @@ private:
 
     struct Storage {
         InfoHash id;
+        bool want4 {true}, want6 {true};
+        time_point maintenance_time {};
         std::vector<ValueStorage> values {};
         std::vector<Listener> listeners {};
         std::map<size_t, LocalListener> local_listeners {};
         size_t listener_token {1};
 
         Storage() {}
-        Storage(InfoHash id) : id(id) {}
+        Storage(InfoHash id, time_point now) : id(id), maintenance_time(now+MAX_STORAGE_MAINTENANCE_EXPIRE_TIME) {}
     };
 
     enum class MessageType {
@@ -802,9 +827,9 @@ private:
 
     int sendListenConfirmation(const sockaddr*, socklen_t, TransId);
 
-    int sendAnnounceValue(const sockaddr*, socklen_t, TransId,
-                            const InfoHash&, const Value&,
-                            const Blob& token, int confirm);
+    int sendAnnounceValue(const sockaddr*, socklen_t, TransId, const InfoHash&,
+            const Value&, time_point created, const Blob& token,
+            int confirm);
 
     int sendValueAnnounced(const sockaddr*, socklen_t, TransId, Value::Id);
 
@@ -820,6 +845,7 @@ private:
         TransId tid;
         Blob token;
         Value::Id value_id;
+        time_point created { time_point::max() };
         Blob nodes4;
         Blob nodes6;
         std::vector<std::shared_ptr<Value>> values;
@@ -844,9 +870,11 @@ private:
     }
 
     void storageAddListener(const InfoHash& id, const InfoHash& node, const sockaddr *from, socklen_t fromlen, uint16_t tid);
-    ValueStorage* storageStore(const InfoHash& id, const std::shared_ptr<Value>& value);
+    ValueStorage* storageStore(const InfoHash& id, const std::shared_ptr<Value>& value, time_point created=time_point::max());
     void expireStorage();
     void storageChanged(Storage& st, ValueStorage&);
+
+    size_t maintainStorage(InfoHash id, bool force=false, DoneCallback donecb=nullptr);
 
     // Buckets
     Bucket* findBucket(const InfoHash& id, sa_family_t af) {
@@ -893,7 +921,7 @@ private:
      * The values can be filtered by an arbitrary provided filter.
      */
     Search* search(const InfoHash& id, sa_family_t af, GetCallback = nullptr, DoneCallback = nullptr, Value::Filter = Value::AllFilter());
-    void announce(const InfoHash& id, sa_family_t af, std::shared_ptr<Value> value, DoneCallback callback);
+    void announce(const InfoHash& id, sa_family_t af, std::shared_ptr<Value> value, DoneCallback callback, time_point created=time_point::max());
     size_t listenTo(const InfoHash& id, sa_family_t af, GetCallback cb, Value::Filter f = Value::AllFilter());
 
     std::list<Search>::iterator newSearch();

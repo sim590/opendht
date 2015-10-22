@@ -2,8 +2,17 @@
 # Copyright (C) 2015 Savoir-Faire Linux Inc.
 # Author: Adrien Béraud <adrien.beraud@savoirfairelinux.com>
 
-import signal, os, sys, ipaddress, random
-from pyroute2 import IPDB
+import sys
+import signal
+import random
+import time
+import threading
+import queue
+
+import ipaddress
+import netifaces
+
+import numpy as np
 
 sys.path.append('..')
 from opendht import *
@@ -12,8 +21,14 @@ class DhtNetwork(object):
     nodes = []
 
     @staticmethod
+    def log(*to_print):
+        BOLD   = "\033[1m"
+        NORMAL = "\033[0m"
+        print('%s[DhtNetwork-%s]%s' % (BOLD, DhtNetwork.iface, NORMAL), ':' , *to_print, file=sys.stderr)
+
+    @staticmethod
     def run_node(ip4, ip6, p, bootstrap=[], is_bootstrap=False):
-        print("run_node", ip4, ip6, p, bootstrap)
+        DhtNetwork.log("run_node", ip4, ip6, p, bootstrap)
         id = Identity()
         #id.generate("dhtbench"+str(p), Identity(), 1024)
         n = DhtRunner()
@@ -27,33 +42,20 @@ class DhtNetwork(object):
     def find_ip(iface):
         if not iface or iface == 'any':
             return ('0.0.0.0','')
-        if_ip4 = None
-        if_ip6 = None
-        ipdb = IPDB()
-        try:
-            for ip in ipdb.interfaces[iface].ipaddr:
-                if_ip = ipaddress.ip_address(ip[0])
-                if isinstance(if_ip, ipaddress.IPv4Address):
-                    if_ip4 = ip[0]
-                elif isinstance(if_ip, ipaddress.IPv6Address):
-                    if not if_ip.is_link_local:
-                        if_ip6 = ip[0]
-                if if_ip4 and if_ip6:
-                    break
-        except Exception as e:
-            pass
-        finally:
-            ipdb.release()
+
+        if_ip4 = netifaces.ifaddresses(iface)[netifaces.AF_INET][0]['addr']
+        if_ip6 = netifaces.ifaddresses(iface)[netifaces.AF_INET6][0]['addr']
         return (if_ip4, if_ip6)
 
     def __init__(self, iface=None, ip4=None, ip6=None, port=4000, bootstrap=[], first_bootstrap=False):
+        DhtNetwork.iface = iface
         self.port = port
         ips = DhtNetwork.find_ip(iface)
         self.ip4 = ip4 if ip4 else ips[0]
         self.ip6 = ip6 if ip6 else ips[1]
         self.bootstrap = bootstrap
         if first_bootstrap:
-            print("Starting bootstrap node")
+            DhtNetwork.log("Starting bootstrap node")
             self.nodes.append(DhtNetwork.run_node(self.ip4, self.ip6, self.port, self.bootstrap, is_bootstrap=True))
             self.bootstrap = [(self.ip4, str(self.port))]
             self.port += 1
@@ -71,16 +73,38 @@ class DhtNetwork(object):
         n = DhtNetwork.run_node(self.ip4, self.ip6, self.port, self.bootstrap)
         self.nodes.append(n)
         if not self.bootstrap:
-            print("Using fallback bootstrap", self.ip4, self.port)
+            DhtNetwork.log("Using fallback bootstrap", self.ip4, self.port)
             self.bootstrap = [(self.ip4, str(self.port))]
         self.port += 1
         return n
 
-    def end_node(self):
+    def end_node(self, id=None, shutdown=False):
+        lock = threading.Condition()
+        def shutdown_cb():
+            nonlocal lock
+            DhtNetwork.log('Done.')
+            with lock:
+                lock.notify()
+
         if not self.nodes:
             return
-        n = self.nodes.pop()
-        n[1].join()
+        if id is not None:
+            for n in self.nodes:
+                if n[1].getNodeId() == id:
+                    if shutdown:
+                        with lock:
+                            DhtNetwork.log('Waiting for node to shutdown... ')
+                            n[1].shutdown(shutdown_cb)
+                            lock.wait()
+                    n[1].join()
+                    self.nodes.remove(n)
+                    DhtNetwork.log(id, 'deleted !')
+                    return True
+            return False
+        else:
+            n = self.nodes.pop()
+            n[1].join()
+            return True
 
     def replace_node(self):
         random.shuffle(self.nodes)
@@ -93,20 +117,56 @@ class DhtNetwork(object):
         if n == l:
             return
         if n > l:
-            print("Launching", n-l, "nodes")
+            DhtNetwork.log("Launching", n-l, "nodes")
             for i in range(l, n):
                 self.launch_node()
         else:
-            print("Ending", l-n, "nodes")
+            DhtNetwork.log("Ending", l-n, "nodes")
             #random.shuffle(self.nodes)
             for i in range(n, l):
                 self.end_node()
 
+    def getMessageStats(self):
+        stats = np.array([0,0,0,0,0])
+        for n in self.nodes:
+            stats +=  np.array(n[1].getNodeMessageStats())
+        stats_list = [len(self.nodes)]
+        stats_list.extend(stats.tolist())
+        return stats_list
+
 if __name__ == '__main__':
-    import argparse, threading
+    import argparse
 
     lock = threading.Condition()
     quit = False
+
+    def notify_benchmark(answer=None):
+        NOTIFY_TOKEN     = 'notify'
+        NOTIFY_END_TOKEN = 'notifyend'
+
+        sys.stdout.write('%s\n' % NOTIFY_TOKEN)
+        for line in answer if answer else []:
+            sys.stdout.write(str(line)+'\n')
+        sys.stdout.write('%s\n' % NOTIFY_END_TOKEN)
+        sys.stdout.flush()
+
+    def listen_to_mother_nature(stdin, q):
+        global quit
+
+        def parse_req(req):
+            split_req = req.split(' ')
+
+            op = split_req[0]
+            hashes = [this_hash.replace('\n', '').encode() for this_hash in split_req[1:]]
+
+            return (op, hashes)
+
+        while not quit:
+            req = stdin.readline()
+            parsed_req = parse_req(req)
+            q.put(parsed_req)
+            with lock:
+                lock.notify()
 
     def handler(signum, frame):
         global quit
@@ -139,11 +199,44 @@ if __name__ == '__main__':
         net = DhtNetwork(iface=args.iface, port=args.port, bootstrap=bs)
         net.resize(args.node_num)
 
+        q = queue.Queue()
+        t = threading.Thread(target=listen_to_mother_nature, args=(sys.stdin, q))
+        t.daemon = True
+        t.start()
+
+        notify_benchmark()
+
         with lock:
             while not quit:
                 lock.wait()
+                try:
+                    req,req_args = q.get_nowait()
+                except queue.Empty:
+                    pass
+                else:
+                    SHUTDOWN_NODE_REQ    = 'sdn'
+                    SHUTDOWN_CLUSTER_REQ = 'sdc'
+                    DUMP_STORAGE_REQ     = 'strl'
+                    MESSAGE_STATS        = 'gms'
+
+                    if req in [SHUTDOWN_NODE_REQ, SHUTDOWN_CLUSTER_REQ]:
+                        DhtNetwork.log('got delete request.')
+                        if SHUTDOWN_NODE_REQ:
+                            for n in req_args:
+                                net.end_node(id=n, shutdown=True)
+                        else:
+                            for n in net.nodes:
+                                n.end_node(shutdown=True)
+                            quit = True
+                    elif req == DUMP_STORAGE_REQ:
+                        for n in [m[1] for m in net.nodes if m[1].getNodeId() in req_args]:
+                            net.log(n.getStorageLog())
+                    elif MESSAGE_STATS in req:
+                        notify_benchmark(answer=[net.getMessageStats()])
+                        continue
+                    notify_benchmark()
     except Exception as e:
-        pass
+        DhtNetwork.log(e)
     finally:
         if net:
             net.resize(0)

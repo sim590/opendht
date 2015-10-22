@@ -5,12 +5,12 @@
 # distutils: libraries = opendht gnutls
 # cython: language_level=3
 #
-# Copyright (c) 2015 Savoir-Faire Linux Inc. 
+# Copyright (c) 2015 Savoir-Faire Linux Inc.
 # Author: Guillaume Roguez <guillaume.roguez@savoirfairelinux.com>
 # Author: Adrien Béraud <adrien.beraud@savoirfairelinux.com>
 #
 # This wrapper is written for Cython 0.22
-# 
+#
 # This file is part of OpenDHT Python Wrapper.
 #
 #    OpenDHT Python Wrapper is free software:  you can redistribute it and/or modify
@@ -39,6 +39,12 @@ from cpython cimport ref
 cimport opendht_cpp as cpp
 
 import threading
+
+cdef inline void shutdown_callback(void* user_data) with gil:
+    cbs = <object>user_data
+    if 'shutdown' in cbs and cbs['shutdown']:
+        cbs['shutdown']()
+    ref.Py_DECREF(cbs)
 
 cdef inline bool get_callback(cpp.shared_ptr[cpp.Value] value, void *user_data) with gil:
     cb = (<object>user_data)['get']
@@ -261,6 +267,10 @@ cdef class DhtRunner(_WithID):
             self.thisptr.run(port, config._config)
     def join(self):
         self.thisptr.join()
+    def shutdown(self, shutdown_cb=None):
+        cb_obj = {'shutdown':shutdown_cb}
+        ref.Py_INCREF(cb_obj)
+        self.thisptr.shutdown(cpp.Dht.bindShutdownCb(shutdown_callback, <void*>cb_obj))
     def isRunning(self):
         return self.thisptr.isRunning()
     def getStorageLog(self):
@@ -327,5 +337,5 @@ cdef class DhtRunner(_WithID):
         return t
     def cancelListen(self, ListenToken token):
         self.thisptr.cancelListen(token._h, token._t)
-        # fixme: not thread safe
         ref.Py_DECREF(<object>token._cb['cb'])
+        # fixme: not thread safe
