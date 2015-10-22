@@ -545,22 +545,34 @@ class PersistenceTest(FeatureTest):
         bootstrap = PersistenceTest.bootstrap
 
         n_producers = opts['producers'] if 'producers' in opts else 16
+
+        # this node count is appropriate in order to garantee non-producer nodes
+        # will host values.
+        EFFICIENT_NODE_NUM = 8*n_producers if 8*n_producers > 1024 else 1024
+        self.wb.resize_clusters(EFFICIENT_NODE_NUM/self.wb.node_per_loc-self.wb.clusters)
+
         hashes = []
         values = [Value(b'foo')]
         nodes = set([])
 
         try:
+            #self.wb.resize_clusters()
             bootstrap.resize(n_producers+2)
             consumer = bootstrap.get(1)
             producers = (bootstrap.get(n) for n in range(2,n_producers+2))
             for p in producers:
                 hashes.append(random_hash())
-                self._dhtPut(p, hashes[-1], values[0])
+                self._dhtPut(p, hashes[-1], *values)
 
             for h in hashes:
                 self._dhtGet(consumer, h)
                 for n in PersistenceTest.foreign_nodes:
                     nodes.add(n)
+
+            for _hash in hashes:
+                for _ in range(8):
+                    #TODO: créer un nœud avec un hash près de `_hash`
+                    pass
 
             bootstrap.log('Waiting 10 minutes for normal storage maintenance.')
             time.sleep(10*60)
