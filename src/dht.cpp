@@ -190,13 +190,13 @@ Dht::shutdown(ShutdownCallback cb) {
     auto remaining = std::make_shared<int>(0);
     auto str_donecb = [=](bool, const std::vector<std::shared_ptr<Node>>&) {
         --*remaining;
-        if (!*remaining) { cb(); }
+        if (!*remaining && cb) { cb(); }
     };
 
     for (auto str : store) {
         *remaining += maintainStorage(str.id, true, str_donecb);
     }
-    if (!*remaining) { cb(); }
+    if (!*remaining && cb) { cb(); }
 }
 
 bool
@@ -1398,7 +1398,9 @@ Dht::announce(const InfoHash& id, sa_family_t af, std::shared_ptr<Value> value, 
             if (a_sr->callback)
                 a_sr->callback(true, {});
             a_sr->callback = {};
-            callback(true, {});
+            if (callback) {
+                callback(true, {});
+            }
             return;
         } else {
             if (a_sr->callback)
