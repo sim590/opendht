@@ -482,13 +482,24 @@ struct FilterDescription
     {
         None,
         Id,
-        ValueType
+        ValueType,
+        Data,
+        OwnerPk,
+        RecipientHash,
+        UserType,
+        Signature,
+        EncryptedData
     };
 
     FilterDescription() {}
     FilterDescription(Type t, uint64_t target) : type(t), value(target) {}
 
     Value::Filter getLocalFilter() const {
+        // TODO: add these types filters:
+        // - OwnerPk
+        // - RecipientHash
+        // - UserType
+        // - Signature
         switch (type) {
         case Type::Id:
             return Value::IdFilter(value);
@@ -538,6 +549,26 @@ struct Query
 
     Query& setValueType(ValueType::Id type) {
         filters_.emplace_back(FilterDescription::Type::ValueType, type);
+        return *this;
+    }
+
+    Query& setOwnerPk() {
+        // TODO
+        return *this;
+    }
+
+    Query& setRecipientHash() {
+        // TODO
+        return *this;
+    }
+
+    Query& setUserType() {
+        // TODO
+        return *this;
+    }
+
+    Query& setSignature() {
+        // TODO
         return *this;
     }
 
