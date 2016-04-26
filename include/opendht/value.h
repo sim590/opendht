@@ -40,6 +40,7 @@
 namespace dht {
 
 struct Value;
+struct Query;
 
 /**
  * A storage policy is applied once to every incoming value storage requests.
@@ -203,7 +204,7 @@ struct Value
 
     static Filter ownerFilter(const InfoHash& pkh) {
         return [pkh](const Value& v) {
-            return v.owner.getId() == pkh;
+            return v.owner->getId() == pkh;
         };
     }
 
@@ -454,6 +455,42 @@ struct Value
         pk.pack(std::string("dat")); msgpack_pack_to_encrypt(pk);
     }
 
+    template <typename Packer>
+    void msgpack_pack_fields(const std::set<Value::Field>& fields, Packer& pk) const
+    {
+        for (const auto& field : fields)
+            switch (field) {
+                case Value::Field::Id:
+                    pk.pack(id);
+                    break;
+                case Value::Field::ValueType:
+                    pk.pack(type);
+                    break;
+                case Value::Field::Data:
+                    pk.pack_bin(data.size());
+                    pk.pack_bin_body((const char*)data.data(), data.size());
+                    break;
+                case Value::Field::OwnerPk:
+                    owner->msgpack_pack(pk);
+                    break;
+                case Value::Field::RecipientHash:
+                    pk.pack(recipient);
+                    break;
+                case Value::Field::UserType:
+                    pk.pack(user_type);
+                    break;
+                case Value::Field::Signature:
+                    pk.pack_bin(signature.size());
+                    pk.pack_bin_body((const char*)signature.data(), signature.size());
+                    break;
+                case Value::Field::EncryptedData:
+                    pk.pack_bin(cypher.size());
+                    pk.pack_bin_body((const char*)cypher.data(), cypher.size());
+                default:
+                    break;
+            }
+    }
+
     void msgpack_unpack(msgpack::object o);
     void msgpack_unpack_body(const msgpack::object& o);
     Blob getPacked() const {
@@ -462,6 +499,8 @@ struct Value
         pk.pack(*this);
         return {buffer.data(), buffer.data()+buffer.size()};
     }
+
+    void msgpack_unpack_fields(const Query& query, const msgpack::object& o, unsigned offset);
 
     Id id {INVALID_ID};
 
@@ -669,9 +708,9 @@ struct Query
         return Value::Filter::chain(std::move(fset));
     }
 
-    std::set<Value::Field> getFieldSelector() {
+    std::set<Value::Field> getFieldSelector() const {
         std::set<Value::Field> fields {};
-        for (auto f : fieldSelectors_) {
+        for (const auto& f : fieldSelectors_) {
             fields.insert(f.getField());
         }
         return fields;
