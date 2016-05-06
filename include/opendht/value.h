@@ -575,6 +575,12 @@ struct FilterDescription
 
     bool operator==(const FilterDescription& fd) const;
 
+    // accessors
+    Value::Field getField() const { return field; }
+    uint64_t getInt() const { return intValue; }
+    InfoHash getHash() const { return hashValue; }
+    Blob getBlob() const { return blobValue; }
+
     template <typename Packer>
     void msgpack_pack(Packer& p) const {
         p.pack_map(2);
@@ -701,6 +707,8 @@ struct Query
     }
 
     void msgpack_unpack(const msgpack::object& o);
+
+    friend std::ostream& operator<<(std::ostream& s, const dht::Query& q);
 
 private:
     std::vector<FilterDescription> filters_;
