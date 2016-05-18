@@ -583,11 +583,14 @@ struct FilterDescription
                 case Value::Field::Id:
                 case Value::Field::ValueType:
                     p.pack(intValue);
+                    break;
                 case Value::Field::OwnerPk:
                     p.pack(hashValue);
+                    break;
                 case Value::Field::UserType:
                     p.pack_bin(blobValue.size());
                     p.pack_bin_body((const char*)blobValue.data(), blobValue.size());
+                    break;
                 default:
                     throw msgpack::type_error();
             }
@@ -614,10 +617,13 @@ struct FilterDescription
                 case Value::Field::Id:
                 case Value::Field::ValueType:
                     intValue = v->as<decltype(intValue)>();
+                    break;
                 case Value::Field::OwnerPk:
                     hashValue = v->as<decltype(hashValue)>();
+                    break;
                 case Value::Field::UserType:
                     blobValue = unpackBlob(*v);
+                    break;
                 default:
                     throw msgpack::type_error();
             }
