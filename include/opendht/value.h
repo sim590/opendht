@@ -665,7 +665,6 @@ struct Query
      *  - $string$: a simple string WITHOUT SPACES.
      *  - $integer$: a simple integer.
      */
-    //TODO: handle spaces quoted strings containing spaces.
     Query(std::string&& q_str);
 
     /**
