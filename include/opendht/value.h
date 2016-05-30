@@ -578,24 +578,21 @@ struct FilterDescription
         p.pack(std::string("f")); p.pack(static_cast<uint8_t>(field));
 
         p.pack(std::string("v"));
-        if (value_str.empty())
-            switch (field) {
-                case Value::Field::Id:
-                case Value::Field::ValueType:
-                    p.pack(intValue);
-                    break;
-                case Value::Field::OwnerPk:
-                    p.pack(hashValue);
-                    break;
-                case Value::Field::UserType:
-                    p.pack_bin(blobValue.size());
-                    p.pack_bin_body((const char*)blobValue.data(), blobValue.size());
-                    break;
-                default:
-                    throw msgpack::type_error();
-            }
-        else
-            p.pack(value_str);
+        switch (field) {
+            case Value::Field::Id:
+            case Value::Field::ValueType:
+                p.pack(intValue);
+                break;
+            case Value::Field::OwnerPk:
+                p.pack(hashValue);
+                break;
+            case Value::Field::UserType:
+                p.pack_bin(blobValue.size());
+                p.pack_bin_body((const char*)blobValue.data(), blobValue.size());
+                break;
+            default:
+                throw msgpack::type_error();
+        }
     }
 
     void msgpack_unpack(msgpack::object msg) {
@@ -610,8 +607,6 @@ struct FilterDescription
         auto v = findMapValue(msg, "v");
         if (not v)
             throw msgpack::type_error();
-        else if (v->type == msgpack::type::STR)
-            value_str = v->as<std::string>();
         else
             switch (field) {
                 case Value::Field::Id:
@@ -637,7 +632,6 @@ private:
     uint64_t intValue {};
     InfoHash hashValue {};
     Blob blobValue {};
-    std::string value_str {};
 };
 
 /*!
