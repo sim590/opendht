@@ -1591,12 +1591,13 @@ Dht::get(const InfoHash& id, GetCallback getcb, DoneCallback donecb, Value::Filt
         }
     };
     auto cb = [=](const std::vector<std::shared_ptr<Value>>& values) {
+        auto selection = q.getFieldSelector();
         if (status->done)
             return false;
         std::vector<std::shared_ptr<Value>> newvals {};
         for (const auto& v : values) {
             auto it = std::find_if(vals->cbegin(), vals->cend(), [&](const std::shared_ptr<Value>& sv) {
-                return sv == v || *sv == *v;
+                return sv == v or *sv == *v;
             });
             if (it == vals->cend()) {
                 if (!filter || filter(*v))

@@ -133,8 +133,14 @@ public:
      * @param cb a function called when new values are found on the network.
      *           It should return false to stop the operation.
      * @param donecb a function called when the operation is complete.
-                        cb and donecb won't be called again afterward.
+                     cb and donecb won't be called again afterward.
      * @param f a filter function used to prefilter values.
+     * @param q a query used to filter values on the remotes before they send a
+     *          response.
+     *          WARNING: When using a Query containing a SELECT clause, as of
+     *          now, the returned values are unusable since for a value you
+     *          cannot tell what field is valid. TODO: replace the Query by
+     *          "Where" struct.
      */
     virtual void get(const InfoHash& key, GetCallback cb, DoneCallback donecb={}, Value::Filter&& f={}, Query&& q = {});
     virtual void get(const InfoHash& key, GetCallback cb, DoneCallbackSimple donecb={}, Value::Filter&& f={}, Query&& q = {}) {
