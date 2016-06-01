@@ -164,7 +164,8 @@ void cmd_loop(DhtRunner& dht, dht_params& params)
             std::string rem;
             std::getline(iss, rem);
             dht::Where w {std::move(rem)};
-            std::cout << w << std::endl;
+            dht::Query q {{}, w};
+            std::cout << q << std::endl;
             dht.get(id, [start](std::shared_ptr<Value> value) {
                 auto now = std::chrono::high_resolution_clock::now();
                 std::cout << "Get: found value (after " << print_dt(now-start) << "s)" << std::endl;
@@ -179,7 +180,8 @@ void cmd_loop(DhtRunner& dht, dht_params& params)
             std::string rem;
             std::getline(iss, rem);
             dht::Where w {std::move(rem)};
-            std::cout << w << std::endl;
+            dht::Query q {{}, w};
+            std::cout << q << std::endl;
             dht.listen(id, [](std::shared_ptr<Value> value) {
                 std::cout << "Listen: found value:" << std::endl;
                 std::cout << "\t" << *value << std::endl;

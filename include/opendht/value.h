@@ -550,7 +550,7 @@ private:
     Value::Field field {Value::Field::None};
 };
 
-/*!
+/**
  * @class   FilterDescription
  * @brief   Describes a value filter.
  * @details
@@ -686,7 +686,7 @@ private:
     std::vector<FieldSelectorDescription> fieldSelection_;
 };
 
-/*!
+/**
  * @class   Where
  * @brief   Serializable dht::Value filter.
  * @details
@@ -775,7 +775,7 @@ private:
     std::vector<FilterDescription> filters_;
 };
 
-/*!
+/**
  * @class   Query
  * @brief   Describes a query destined to another peer.
  * @details

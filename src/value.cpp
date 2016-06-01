@@ -369,7 +369,7 @@ std::ostream& operator<<(std::ostream& s, const dht::Select& select) {
 
 std::ostream& operator<<(std::ostream& s, const dht::Where& where) {
     if (not where.filters_.empty()) {
-        s << " WHERE ";
+        s << "WHERE ";
         for (auto f = where.filters_.begin() ; f != where.filters_.end() ; ++f) {
             switch (f->getField()) {
                 case Value::Field::Id:
