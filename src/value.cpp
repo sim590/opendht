@@ -228,13 +228,13 @@ FilterDescription::getLocalFilter() const
     }
 }
 
-Query::Query(const std::string& q_str) {
-    auto trim_str = [](std::string& str) {
-        auto first = std::min(str.size(), str.find_first_not_of(" "));
-        auto last = std::min(str.size(), str.find_last_not_of(" "));
-        str = str.substr(first, last - first + 1);
-    };
+void trim_str(std::string& str) {
+    auto first = std::min(str.size(), str.find_first_not_of(" "));
+    auto last = std::min(str.size(), str.find_last_not_of(" "));
+    str = str.substr(first, last - first + 1);
+}
 
+Select::Select(const std::string& q_str) {
     std::istringstream q_iss {q_str};
     std::string token {};
     q_iss >> token;
@@ -246,16 +246,20 @@ Query::Query(const std::string& q_str) {
         while (std::getline(fields, token, ',')) {
             trim_str(token);
             if (token == "id")
-                requireField(Value::Field::Id);
+                field(Value::Field::Id);
             else if (token == "value_type")
-                requireField(Value::Field::ValueType);
+                field(Value::Field::ValueType);
             else if (token == "owner_pk")
-                requireField(Value::Field::OwnerPk);
+                field(Value::Field::OwnerPk);
             else if (token == "user_type")
-                requireField(Value::Field::UserType);
+                field(Value::Field::UserType);
         }
     }
+}
 
+Where::Where(const std::string& q_str) {
+    std::istringstream q_iss {q_str};
+    std::string token {};
     q_iss >> token;
     if (token == "WHERE" or token == "where") {
         std::getline(q_iss, token);
@@ -274,20 +278,20 @@ Query::Query(const std::string& q_str) {
                 std::string s {};
                 std::istringstream convert {value_str};
                 convert >> v;
-                if (value_str.size() > 1 and value_str[0] == '\"' and value_str[value_str.size()-1] == '\"')
+                if (convert.failbit and value_str.size() > 1 and value_str[0] == '\"' and value_str[value_str.size()-1] == '\"')
                     s = value_str.substr(1, value_str.size()-2);
                 else
                     s = value_str;
                 if (field_str == "id")
-                    setValueId(v);
+                    id(v);
                 else if (field_str == "value_type")
-                    setValueType(v);
+                    valueType(v);
                 else if (field_str == "owner_pk")
-                    setOwnerPk(InfoHash(s));
+                    owner(InfoHash(s));
                 else if (field_str == "user_type")
-                    setUserType(s);
+                    userType(s);
                 else
-                    throw std::invalid_argument(QUERY_PARSE_ERROR + " (WHERE) wrong token near: " + field_str);
+                    throw std::invalid_argument(Query::QUERY_PARSE_ERROR + " (WHERE) wrong token near: " + field_str);
             }
         }
     }
@@ -296,50 +300,52 @@ Query::Query(const std::string& q_str) {
 void
 Query::msgpack_unpack(const msgpack::object& o)
 {
-	filters_.clear();
-	fieldSelectors_.clear();
-
 	if (o.type != msgpack::type::MAP)
 		throw msgpack::type_error();
 
 	auto rfilters = findMapValue(o, "w"); /* unpacking filters */
 	if (rfilters)
-        filters_ = rfilters->as<decltype(filters_)>();
+        where.msgpack_unpack(*rfilters);
 	else
 		throw msgpack::type_error();
 
 	auto rfield_selector = findMapValue(o, "s"); /* unpacking field selectors */
 	if (rfield_selector)
-        fieldSelectors_ = rfield_selector->as<decltype(fieldSelectors_)>();
+        select.msgpack_unpack(*rfield_selector);
 	else
 		throw msgpack::type_error();
 }
 
 template <typename T>
-bool satisfied(std::vector<T> fds, std::vector<T> qfds)
+bool subset(std::vector<T> fds, std::vector<T> qfds)
 {
     for (auto& fd : fds) {
         auto correspondance = std::find_if(qfds.begin(), qfds.end(), [&fd](T& _vfd) { return fd == _vfd; });
         if (correspondance == qfds.end())
-            return false; /* the query is not satisfied */
+            return false;
     }
     return true;
 };
 
-bool
-Query::isSatisfiedBy(const Query& q) const
-{
+bool Select::isSatisfiedBy(const Select& os) const {
     /* empty, means all values are selected. */
-    if (fieldSelectors_.empty() and not q.fieldSelectors_.empty())
+    if (fieldSelection_.empty() and not os.fieldSelection_.empty())
         return false;
     else
-        return satisfied(filters_, q.filters_) and satisfied(fieldSelectors_, q.fieldSelectors_);
+        return subset(fieldSelection_, os.fieldSelection_);
 }
 
-std::ostream& operator<<(std::ostream& s, const dht::Query& q)
-{
-    s << "Query[SELECT " << (q.fieldSelectors_.empty() ? "*" : "");
-    for (auto fs = q.fieldSelectors_.begin() ; fs != q.fieldSelectors_.end() ; ++fs) {
+bool Where::isSatisfiedBy(const Where& ow) const {
+    return subset(ow.filters_, filters_);
+}
+
+bool Query::isSatisfiedBy(const Query& q) const {
+    return where.isSatisfiedBy(q.where) and select.isSatisfiedBy(q.select);
+}
+
+std::ostream& operator<<(std::ostream& s, const dht::Select& select) {
+    s << "SELECT " << (select.fieldSelection_.empty() ? "*" : "");
+    for (auto fs = select.fieldSelection_.begin() ; fs != select.fieldSelection_.end() ; ++fs) {
         switch (fs->getField()) {
             case Value::Field::Id:
                 s << "id";
@@ -356,12 +362,15 @@ std::ostream& operator<<(std::ostream& s, const dht::Query& q)
             default:
                 break;
         }
-        s << (std::next(fs) != q.fieldSelectors_.end() ? "," : "");
+        s << (std::next(fs) != select.fieldSelection_.end() ? "," : "");
     }
+    return s;
+}
 
-    if (not q.filters_.empty()){
+std::ostream& operator<<(std::ostream& s, const dht::Where& where) {
+    if (not where.filters_.empty()) {
         s << " WHERE ";
-        for (auto f = q.filters_.begin() ; f != q.filters_.end() ; ++f) {
+        for (auto f = where.filters_.begin() ; f != where.filters_.end() ; ++f) {
             switch (f->getField()) {
                 case Value::Field::Id:
                     s << "id=" << f->getInt();
@@ -380,12 +389,12 @@ std::ostream& operator<<(std::ostream& s, const dht::Query& q)
                 default:
                     break;
             }
-            s << (std::next(f) != q.filters_.end() ? "," : "");
+            s << (std::next(f) != where.filters_.end() ? "," : "");
         }
     }
-    s << "]";
     return s;
 }
+
 
 }
 

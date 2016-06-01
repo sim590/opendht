@@ -605,7 +605,7 @@ NetworkEngine::sendGetValues(std::shared_ptr<Node> n, const InfoHash& info_hash,
     pk.pack_map(5+(network?1:0));
 
     pk.pack(std::string("a"));  pk.pack_map(2 +
-                                (query.getFilter() or not query.getFieldSelector().empty() ? 1:0) +
+                                (query.getFilter() or not query.getSelection().empty() ? 1:0) +
                                 (want>0?1:0));
       pk.pack(std::string("id")); pk.pack(myid);
       pk.pack(std::string("h"));  pk.pack(info_hash);
@@ -709,7 +709,7 @@ NetworkEngine::sendNodesValues(const sockaddr* sa, socklen_t salen, TransId tid,
         pk.pack(std::string("token")); packToken(pk, token);
     }
     if (not st.empty()) { /* pack complete values */
-        auto fields = query.getFieldSelector();
+        auto fields = query.getSelection();
         size_t total_size = 0;
         if (fields.empty()) {
             // We treat the storage as a circular list, and serve a randomly
@@ -824,7 +824,7 @@ NetworkEngine::sendListen(std::shared_ptr<Node> n, const InfoHash& infohash, con
     pk.pack_map(5+(network?1:0));
 
     pk.pack(std::string("a")); pk.pack_map(3 +
-                               (query.getFilter() or not query.getFieldSelector().empty() ? 1:0));
+                               (query.getFilter() or not query.getSelection().empty() ? 1:0));
       pk.pack(std::string("id"));    pk.pack(myid);
       pk.pack(std::string("h"));     pk.pack(infohash);
       pk.pack(std::string("q")); pk.pack(query);

@@ -528,11 +528,11 @@ struct Value
 using ValuesExport = std::pair<InfoHash, Blob>;
 
 /**
- * @struct  FilterDescription
- * @brief   Describes a filter.
+ * @struct  FieldSelectorDescription
+ * @brief   Describes a selection.
  * @details
- * This is meant to narrow data to a set of specified fields. This is equivalent
- * to a SQL "SELECT" statement.
+ * This is meant to narrow data to a set of specified fields. This structure is
+ * used to construct a Select structure.
  */
 struct FieldSelectorDescription
 {
@@ -555,7 +555,8 @@ private:
  * @brief   Describes a value filter.
  * @details
  * This filter description is meant to narrow data to a set of values for which
- * the specified field corresponds. This is equivalent to a SQL "WHERE" statement.
+ * the specified field corresponds. This structure is used to construct a Where
+ * structure.
  */
 struct FilterDescription
 {
@@ -634,6 +635,146 @@ private:
     Blob blobValue {};
 };
 
+/**
+ * @class   Select
+ * @brief   Serializable Value field selection.
+ * @details
+ * This is container for a list of FieldSelectorDescription instances. It
+ * describes a complete SELECT query for dht::Value.
+ */
+struct Select
+{
+    Select() { }
+    Select(const std::string& q_str);
+
+    bool isSatisfiedBy(const Select& os) const;
+
+    /**
+     * Adds restriction on Value::Id based on the id argument.
+     *
+     * @param id  the id.
+     *
+     * @return the resulting query.
+     */
+    Select& field(Value::Field field) {
+        fieldSelection_.emplace_back(field);
+        return *this;
+    }
+
+    /**
+     * Computes the set of selected fields based on previous require* calls.
+     *
+     * @return the set of fields.
+     */
+    std::set<Value::Field> getSelection() const {
+        std::set<Value::Field> fields {};
+        for (const auto& f : fieldSelection_) {
+            fields.insert(f.getField());
+        }
+        return fields;
+    }
+
+    template <typename Packer>
+    void msgpack_pack(Packer& pk) const { pk.pack(fieldSelection_); }
+    void msgpack_unpack(const msgpack::object& o) {
+        fieldSelection_.clear();
+        fieldSelection_ = o.as<decltype(fieldSelection_)>();
+    }
+
+    friend std::ostream& operator<<(std::ostream& s, const dht::Select& q);
+private:
+    std::vector<FieldSelectorDescription> fieldSelection_;
+};
+
+/*!
+ * @class   Where
+ * @brief   Serializable dht::Value filter.
+ * @details
+ * This is container for a list of FilterDescription instances. It describes a
+ * complete WHERE query for dht::Value.
+ */
+struct Where
+{
+    Where() { }
+    Where(const Where& ow) = default;
+    Where(const std::string& q_str);
+
+    bool isSatisfiedBy(const Where& where) const;
+
+    /**
+     * Adds restriction on Value::Id based on the id argument.
+     *
+     * @param id  the id.
+     *
+     * @return the resulting query.
+     */
+    Where& id(Value::Id id) {
+        filters_.emplace_back(Value::Field::Id, id);
+        return *this;
+    }
+
+    /**
+     * Adds restriction on Value::Id based on the id argument.
+     *
+     * @param id  the id.
+     *
+     * @return the resulting query.
+     */
+    Where& valueType(ValueType::Id type) {
+        filters_.emplace_back(Value::Field::ValueType, type);
+        return *this;
+    }
+
+    /**
+     * Adds restriction on Value::Id based on the id argument.
+     *
+     * @param id  the id.
+     *
+     * @return the resulting query.
+     */
+    Where& owner(InfoHash owner_pk_hash) {
+        filters_.emplace_back(Value::Field::OwnerPk, owner_pk_hash);
+        return *this;
+    }
+
+    /**
+     * Adds restriction on Value::Id based on the id argument.
+     *
+     * @param id  the id.
+     *
+     * @return the resulting query.
+     */
+    Where& userType(std::string user_type) {
+        filters_.emplace_back(Value::Field::UserType, Blob {user_type.begin(), user_type.end()});
+        return *this;
+    }
+
+    /**
+     * Computes the Value::Filter based on the list of field value set.
+     *
+     * @return the resulting Value::Filter.
+     */
+    Value::Filter getFilter() const {
+        std::vector<Value::Filter> fset(filters_.size());
+        std::transform(filters_.begin(), filters_.end(), fset.begin(), [](const FilterDescription& f) {
+            return f.getLocalFilter();
+        });
+        return Value::Filter::chainAll(std::move(fset));
+    }
+
+    template <typename Packer>
+    void msgpack_pack(Packer& pk) const { pk.pack(filters_); }
+    void msgpack_unpack(const msgpack::object& o) {
+        filters_.clear();
+        filters_ = o.as<decltype(filters_)>();
+    }
+
+    friend std::ostream& operator<<(std::ostream& s, const dht::Where& q);
+
+private:
+    std::vector<FilterDescription> filters_;
+};
+
 /*!
  * @class   Query
  * @brief   Describes a query destined to another peer.
@@ -644,7 +785,9 @@ private:
  */
 struct Query
 {
-    Query() {}
+    static const std::string QUERY_PARSE_ERROR;
+
+    Query(Select s = {}, Where w = {}) : select(s), where(w) { };
 
     /**
      * Initializes a query based on a SQL-ish formatted string. The abstract
@@ -659,93 +802,22 @@ struct Query
      *  - $string$: a simple string WITHOUT SPACES.
      *  - $integer$: a simple integer.
      */
-    Query(const std::string& q_str);
-
-    /**
-     * Adds restriction on Value::Id based on the id argument.
-     *
-     * @param id  the id.
-     *
-     * @return the resulting query.
-     */
-    Query& setValueId(Value::Id id) {
-        filters_.emplace_back(Value::Field::Id, id);
-        return *this;
-    }
-
-    /**
-     * Adds restriction on Value::Id based on the id argument.
-     *
-     * @param id  the id.
-     *
-     * @return the resulting query.
-     */
-    Query& setValueType(ValueType::Id type) {
-        filters_.emplace_back(Value::Field::ValueType, type);
-        return *this;
-    }
-
-    /**
-     * Adds restriction on Value::Id based on the id argument.
-     *
-     * @param id  the id.
-     *
-     * @return the resulting query.
-     */
-    Query& setOwnerPk(InfoHash owner_pk_hash) {
-        filters_.emplace_back(Value::Field::OwnerPk, owner_pk_hash);
-        return *this;
-    }
-
-    /**
-     * Adds restriction on Value::Id based on the id argument.
-     *
-     * @param id  the id.
-     *
-     * @return the resulting query.
-     */
-    Query& setUserType(std::string user_type) {
-        filters_.emplace_back(Value::Field::UserType, Blob {user_type.begin(), user_type.end()});
-        return *this;
-    }
-
-    /**
-     * Adds restriction on Value::Id based on the id argument.
-     *
-     * @param id  the id.
-     *
-     * @return the resulting query.
-     */
-    Query& requireField(Value::Field field) {
-        fieldSelectors_.emplace_back(field);
-        return *this;
-    }
-
-    /**
-     * Computes the Value::Filter based on the list of field value set.
-     *
-     * @return the resulting Value::Filter.
-     */
-    Value::Filter getFilter() const {
-        std::vector<Value::Filter> fset(filters_.size());
-        std::transform(filters_.begin(), filters_.end(), fset.begin(), [](const FilterDescription& f){
-            return f.getLocalFilter();
-        });
-        return Value::Filter::chainAll(std::move(fset));
-    }
+    /*TODO: robustly seperate SELECT from WHERE string. */
+    /*Query(const std::string& q_str) { }*/
 
     /**
      * Computes the set of selected fields based on previous require* calls.
      *
      * @return the set of fields.
      */
-    std::set<Value::Field> getFieldSelector() const {
-        std::set<Value::Field> fields {};
-        for (const auto& f : fieldSelectors_) {
-            fields.insert(f.getField());
-        }
-        return fields;
-    }
+    std::set<Value::Field> getSelection() const { return select.getSelection(); }
+
+    /**
+     * Computes the Value::Filter based on the list of field value set.
+     *
+     * @return the resulting Value::Filter.
+     */
+    Value::Filter getFilter() const { return where.getFilter(); }
 
     /**
      * Tell if the query is satisfied by another query.
@@ -755,19 +827,19 @@ struct Query
     template <typename Packer>
     void msgpack_pack(Packer& pk) const {
         pk.pack_map(2);
-        pk.pack(std::string("s")); pk.pack(fieldSelectors_); /* packing field selectors */
-        pk.pack(std::string("w")); pk.pack(filters_);        /* packing filters */
+        pk.pack(std::string("s")); pk.pack(select); /* packing field selectors */
+        pk.pack(std::string("w")); pk.pack(where);  /* packing filters */
     }
 
     void msgpack_unpack(const msgpack::object& o);
 
-    friend std::ostream& operator<<(std::ostream& s, const dht::Query& q);
+    friend std::ostream& operator<<(std::ostream& s, const dht::Query& q) {
+        s << "Query[" << q.select << " " << q.where << "]";
+    }
 
 private:
-    static const std::string QUERY_PARSE_ERROR;
-
-    std::vector<FilterDescription> filters_;
-    std::vector<FieldSelectorDescription> fieldSelectors_;
+    Select select {};
+    Where where {};
 };
 
 template <typename T,

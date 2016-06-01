@@ -1591,7 +1591,7 @@ Dht::get(const InfoHash& id, GetCallback getcb, DoneCallback donecb, Value::Filt
         }
     };
     auto cb = [=](const std::vector<std::shared_ptr<Value>>& values) {
-        auto selection = q.getFieldSelector();
+        auto selection = q.getSelection();
         if (status->done)
             return false;
         std::vector<std::shared_ptr<Value>> newvals {};
