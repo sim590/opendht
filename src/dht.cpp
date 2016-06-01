@@ -1423,10 +1423,11 @@ Dht::listenTo(const InfoHash& id, sa_family_t af, GetCallback cb, Value::Filter 
 }
 
 size_t
-Dht::listen(const InfoHash& id, GetCallback cb, Value::Filter&& f, Query&& q)
+Dht::listen(const InfoHash& id, GetCallback cb, Value::Filter&& f, Where&& where)
 {
     scheduler.syncTime();
 
+    Query q {{}, where};
     auto vals = std::make_shared<std::map<Value::Id, std::shared_ptr<Value>>>();
     auto token = ++listener_token;
 
@@ -1569,10 +1570,11 @@ struct OpStatus {
 };
 
 void
-Dht::get(const InfoHash& id, GetCallback getcb, DoneCallback donecb, Value::Filter&& filter, Query&& q)
+Dht::get(const InfoHash& id, GetCallback getcb, DoneCallback donecb, Value::Filter&& filter, Where&& where)
 {
     scheduler.syncTime();
 
+    Query q {{}, where};
     auto status = std::make_shared<OpStatus>();
     auto status4 = std::make_shared<OpStatus>();
     auto status6 = std::make_shared<OpStatus>();

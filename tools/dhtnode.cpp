@@ -163,8 +163,8 @@ void cmd_loop(DhtRunner& dht, dht_params& params)
         if (op == "g") {
             std::string rem;
             std::getline(iss, rem);
-            dht::Query q(std::move(rem));
-            std::cout << q << std::endl;
+            dht::Where w {std::move(rem)};
+            std::cout << w << std::endl;
             dht.get(id, [start](std::shared_ptr<Value> value) {
                 auto now = std::chrono::high_resolution_clock::now();
                 std::cout << "Get: found value (after " << print_dt(now-start) << "s)" << std::endl;
@@ -173,18 +173,18 @@ void cmd_loop(DhtRunner& dht, dht_params& params)
             }, [start](bool ok) {
                 auto end = std::chrono::high_resolution_clock::now();
                 std::cout << "Get: " << (ok ? "completed" : "failure") << " (took " << print_dt(end-start) << "s)" << std::endl;
-            }, {}, std::move(q));
+            }, {}, std::move(w));
         }
         else if (op == "l") {
             std::string rem;
             std::getline(iss, rem);
-            dht::Query q {std::move(rem)};
-            std::cout << q << std::endl;
+            dht::Where w {std::move(rem)};
+            std::cout << w << std::endl;
             dht.listen(id, [](std::shared_ptr<Value> value) {
                 std::cout << "Listen: found value:" << std::endl;
                 std::cout << "\t" << *value << std::endl;
                 return true;
-            }, {}, std::move(q));
+            }, {}, std::move(w));
         }
         else if (op == "p") {
             std::string v;

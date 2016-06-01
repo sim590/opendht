@@ -142,15 +142,15 @@ public:
      *          cannot tell what field is valid. TODO: replace the Query by
      *          "Where" struct.
      */
-    virtual void get(const InfoHash& key, GetCallback cb, DoneCallback donecb={}, Value::Filter&& f={}, Query&& q = {});
-    virtual void get(const InfoHash& key, GetCallback cb, DoneCallbackSimple donecb={}, Value::Filter&& f={}, Query&& q = {}) {
-        get(key, cb, bindDoneCb(donecb), std::forward<Value::Filter>(f), std::forward<Query>(q));
+    virtual void get(const InfoHash& key, GetCallback cb, DoneCallback donecb={}, Value::Filter&& f={}, Where&& w = {});
+    virtual void get(const InfoHash& key, GetCallback cb, DoneCallbackSimple donecb={}, Value::Filter&& f={}, Where&& w = {}) {
+        get(key, cb, bindDoneCb(donecb), std::forward<Value::Filter>(f), std::forward<Where>(w));
     }
-    virtual void get(const InfoHash& key, GetCallbackSimple cb, DoneCallback donecb={}, Value::Filter&& f={}, Query&& q = {}) {
-        get(key, bindGetCb(cb), donecb, std::forward<Value::Filter>(f), std::forward<Query>(q));
+    virtual void get(const InfoHash& key, GetCallbackSimple cb, DoneCallback donecb={}, Value::Filter&& f={}, Where&& w = {}) {
+        get(key, bindGetCb(cb), donecb, std::forward<Value::Filter>(f), std::forward<Where>(w));
     }
-    virtual void get(const InfoHash& key, GetCallbackSimple cb, DoneCallbackSimple donecb, Value::Filter&& f={}, Query&& q = {}) {
-        get(key, bindGetCb(cb), bindDoneCb(donecb), std::forward<Value::Filter>(f), std::forward<Query>(q));
+    virtual void get(const InfoHash& key, GetCallbackSimple cb, DoneCallbackSimple donecb, Value::Filter&& f={}, Where&& w = {}) {
+        get(key, bindGetCb(cb), bindDoneCb(donecb), std::forward<Value::Filter>(f), std::forward<Where>(w));
     }
 
     /**
@@ -223,9 +223,9 @@ public:
      *
      * @return a token to cancel the listener later.
      */
-    virtual size_t listen(const InfoHash&, GetCallback, Value::Filter&&={}, Query&& q = {});
-    virtual size_t listen(const InfoHash& key, GetCallbackSimple cb, Value::Filter f={}, Query q = {}) {
-        return listen(key, bindGetCb(cb), std::forward<Value::Filter>(f), std::forward<Query>(q));
+    virtual size_t listen(const InfoHash&, GetCallback, Value::Filter&&={}, Where&& w = {});
+    virtual size_t listen(const InfoHash& key, GetCallbackSimple cb, Value::Filter f={}, Where w = {}) {
+        return listen(key, bindGetCb(cb), std::forward<Value::Filter>(f), std::forward<Where>(w));
     }
 
     virtual bool cancelListen(const InfoHash&, size_t token);

@@ -291,15 +291,15 @@ SecureDht::getCallbackFilter(GetCallback cb, Value::Filter&& filter)
 }
 
 void
-SecureDht::get(const InfoHash& id, GetCallback cb, DoneCallback donecb, Value::Filter&& f, Query&& q)
+SecureDht::get(const InfoHash& id, GetCallback cb, DoneCallback donecb, Value::Filter&& f, Where&& w)
 {
-    Dht::get(id, getCallbackFilter(cb, std::forward<Value::Filter>(f)), donecb, {}, std::forward<Query>(q));
+    Dht::get(id, getCallbackFilter(cb, std::forward<Value::Filter>(f)), donecb, {}, std::forward<Where>(w));
 }
 
 size_t
-SecureDht::listen(const InfoHash& id, GetCallback cb, Value::Filter&& f, Query&& q)
+SecureDht::listen(const InfoHash& id, GetCallback cb, Value::Filter&& f, Where&& w)
 {
-    return Dht::listen(id, getCallbackFilter(cb, std::forward<Value::Filter>(f)), {}, std::forward<Query>(q));
+    return Dht::listen(id, getCallbackFilter(cb, std::forward<Value::Filter>(f)), {}, std::forward<Where>(w));
 }
 
 void

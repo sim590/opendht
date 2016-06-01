@@ -429,37 +429,37 @@ DhtRunner::doRun(const sockaddr_in* sin4, const sockaddr_in6* sin6, SecureDht::C
 }
 
 void
-DhtRunner::get(InfoHash hash, GetCallback vcb, DoneCallback dcb, Value::Filter f, Query q)
+DhtRunner::get(InfoHash hash, GetCallback vcb, DoneCallback dcb, Value::Filter f, Where w)
 {
     std::lock_guard<std::mutex> lck(storage_mtx);
     pending_ops.emplace([=](SecureDht& dht) mutable {
-        dht.get(hash, vcb, dcb, std::move(f), std::move(q));
+        dht.get(hash, vcb, dcb, std::move(f), std::move(w));
     });
     cv.notify_all();
 }
 
 void
-DhtRunner::get(const std::string& key, GetCallback vcb, DoneCallbackSimple dcb, Value::Filter f, Query q)
+DhtRunner::get(const std::string& key, GetCallback vcb, DoneCallbackSimple dcb, Value::Filter f, Where w)
 {
-    get(InfoHash::get(key), vcb, dcb, f, q);
+    get(InfoHash::get(key), vcb, dcb, f, w);
 }
 
 std::future<size_t>
-DhtRunner::listen(InfoHash hash, GetCallback vcb, Value::Filter f, Query q)
+DhtRunner::listen(InfoHash hash, GetCallback vcb, Value::Filter f, Where w)
 {
     std::lock_guard<std::mutex> lck(storage_mtx);
     auto ret_token = std::make_shared<std::promise<size_t>>();
     pending_ops.emplace([=](SecureDht& dht) mutable {
-        ret_token->set_value(dht.listen(hash, vcb, std::move(f), std::move(q)));
+        ret_token->set_value(dht.listen(hash, vcb, std::move(f), std::move(w)));
     });
     cv.notify_all();
     return ret_token->get_future();
 }
 
 std::future<size_t>
-DhtRunner::listen(const std::string& key, GetCallback vcb, Value::Filter f, Query q)
+DhtRunner::listen(const std::string& key, GetCallback vcb, Value::Filter f, Where w)
 {
-    return listen(InfoHash::get(key), vcb, f, q);
+    return listen(InfoHash::get(key), vcb, f, w);
 }
 
 void
