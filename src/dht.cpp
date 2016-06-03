@@ -1905,7 +1905,7 @@ Dht::connectivityChanged()
     auto stop_listen = [&](std::map<InfoHash, std::shared_ptr<Search>> srs) {
         for (auto& sp : srs)
             for (auto& sn : sp.second->nodes)
-                sn.listenStatus.reset();
+                sn.listenStatus.clear();
     };
     stop_listen(searches4);
     stop_listen(searches6);
