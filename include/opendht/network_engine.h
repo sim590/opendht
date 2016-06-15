@@ -153,6 +153,7 @@ public:
         Blob ntoken {};
         Value::Id vid {};
         std::vector<std::shared_ptr<Value>> values {};
+        std::vector<std::shared_ptr<FieldValueIndex>> sub_values {};
         std::vector<std::shared_ptr<Node>> nodes4 {};
         std::vector<std::shared_ptr<Node>> nodes6 {};
         RequestAnswer() {}

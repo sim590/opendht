@@ -159,40 +159,8 @@ Value::msgpack_unpack_body(const msgpack::object& o)
     }
 }
 
-void
-Value::msgpack_unpack_fields(const std::set<Value::Field>& fields, const msgpack::object& o, unsigned offset)
-{
-    owner = {};
-    recipient = {};
-    cypher.clear();
-    signature.clear();
-    data.clear();
-    type = 0;
-
-    unsigned j = 0;
-    for (const auto& field : fields) {
-        auto& field_value = o.via.array.ptr[offset+(j++)];
-        switch (field) {
-            case Value::Field::Id:
-                id = field_value.as<decltype(id)>();
-                break;
-            case Value::Field::ValueType:
-                type = field_value.as<decltype(type)>();
-                break;
-            case Value::Field::OwnerPk:
-                owner = field_value.as<decltype(owner)>();
-                break;
-            case Value::Field::UserType:
-                user_type = field_value.as<decltype(user_type)>();
-                break;
-            default:
-                throw msgpack::type_error();
-        }
-    }
-}
-
 bool
-FilterDescription::operator==(const FilterDescription& vfd) const
+FieldValue::operator==(const FieldValue& vfd) const
 {
     if (field != vfd.field)
         return false;
@@ -212,7 +180,7 @@ FilterDescription::operator==(const FilterDescription& vfd) const
 }
 
 Value::Filter
-FilterDescription::getLocalFilter() const
+FieldValue::getLocalFilter() const
 {
     switch (field) {
         case Value::Field::Id:
@@ -225,6 +193,31 @@ FilterDescription::getLocalFilter() const
             return Value::userTypeFilter(std::string {blobValue.begin(), blobValue.end()});
         default:
             return Value::AllFilter();
+    }
+}
+
+void
+FieldValueIndex::msgpack_unpack_fields(const std::set<Value::Field>& fields, const msgpack::object& o, unsigned offset)
+{
+    index.clear();
+
+    unsigned j = 0;
+    for (const auto& field : fields) {
+        auto& field_value = o.via.array.ptr[offset+(j++)];
+        switch (field) {
+            case Value::Field::Id:
+            case Value::Field::ValueType:
+                index[field] = FieldValue(field, field_value.as<uint64_t>());
+                break;
+            case Value::Field::OwnerPk:
+                index[field] = FieldValue(field, field_value.as<InfoHash>());
+                break;
+            case Value::Field::UserType:
+                index[field] = FieldValue(field, field_value.as<Blob>());
+                break;
+            default:
+                throw msgpack::type_error();
+        }
     }
 }
 

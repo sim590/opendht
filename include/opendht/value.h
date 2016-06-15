@@ -528,44 +528,20 @@ struct Value
 using ValuesExport = std::pair<InfoHash, Blob>;
 
 /**
- * @struct  FieldSelectorDescription
- * @brief   Describes a selection.
- * @details
- * This is meant to narrow data to a set of specified fields. This structure is
- * used to construct a Select structure.
- */
-struct FieldSelectorDescription
-{
-    FieldSelectorDescription() {}
-    FieldSelectorDescription(Value::Field f) : field(f) {}
-
-    Value::Field getField() const { return field; }
-
-    bool operator==(const FieldSelectorDescription& fd) const { return field == fd.field; }
-
-    template <typename Packer>
-    void msgpack_pack(Packer& p) const { p.pack(static_cast<uint8_t>(field)); }
-    void msgpack_unpack(msgpack::object msg) { field = static_cast<Value::Field>(msg.as<int>()); }
-private:
-    Value::Field field {Value::Field::None};
-};
-
-/**
- * @class   FilterDescription
+ * @class   FieldValue
  * @brief   Describes a value filter.
  * @details
- * This filter description is meant to narrow data to a set of values for which
- * the specified field corresponds. This structure is used to construct a Where
- * structure.
+ * This structure holds the value for a specified field. It's type can either be
+ * uint64_t, InfoHash or Blob.
  */
-struct FilterDescription
+struct FieldValue
 {
-    FilterDescription() {}
-    FilterDescription(Value::Field f, uint64_t int_value) : field(f), intValue(int_value) {}
-    FilterDescription(Value::Field f, InfoHash hash_value) : field(f), hashValue(hash_value) {}
-    FilterDescription(Value::Field f, Blob blob_value) : field(f), blobValue(blob_value) {}
+    FieldValue() {}
+    FieldValue(Value::Field f, uint64_t int_value) : field(f), intValue(int_value) {}
+    FieldValue(Value::Field f, InfoHash hash_value) : field(f), hashValue(hash_value) {}
+    FieldValue(Value::Field f, Blob blob_value) : field(f), blobValue(blob_value) {}
 
-    bool operator==(const FilterDescription& fd) const;
+    bool operator==(const FieldValue& fd) const;
 
     // accessors
     Value::Field getField() const { return field; }
@@ -635,6 +611,46 @@ private:
     Blob blobValue {};
 };
 
+/*!
+ * @class   FieldValueIndex
+ * @brief   An index for field values.
+ * @details
+ * This structures is meant to manipulate a subset of fields normally contained
+ * in Value.
+ */
+struct FieldValueIndex {
+    void msgpack_unpack_fields(const std::set<Value::Field>& fields,
+            const msgpack::object& o,
+            unsigned offset);
+
+private:
+    std::map<Value::Field, FieldValue> index {};
+};
+
+
+/**
+ * @struct  FieldSelectorDescription
+ * @brief   Describes a selection.
+ * @details
+ * This is meant to narrow data to a set of specified fields. This structure is
+ * used to construct a Select structure.
+ */
+struct FieldSelectorDescription
+{
+    FieldSelectorDescription() {}
+    FieldSelectorDescription(Value::Field f) : field(f) {}
+
+    Value::Field getField() const { return field; }
+
+    bool operator==(const FieldSelectorDescription& fd) const { return field == fd.field; }
+
+    template <typename Packer>
+    void msgpack_pack(Packer& p) const { p.pack(static_cast<uint8_t>(field)); }
+    void msgpack_unpack(msgpack::object msg) { field = static_cast<Value::Field>(msg.as<int>()); }
+private:
+    Value::Field field {Value::Field::None};
+};
+
 /**
  * @class   Select
  * @brief   Serializable Value field selection.
@@ -690,7 +706,7 @@ private:
  * @class   Where
  * @brief   Serializable dht::Value filter.
  * @details
- * This is container for a list of FilterDescription instances. It describes a
+ * This is container for a list of FieldValue instances. It describes a
  * complete WHERE query for dht::Value.
  */
 struct Where
@@ -756,7 +772,7 @@ struct Where
      */
     Value::Filter getFilter() const {
         std::vector<Value::Filter> fset(filters_.size());
-        std::transform(filters_.begin(), filters_.end(), fset.begin(), [](const FilterDescription& f) {
+        std::transform(filters_.begin(), filters_.end(), fset.begin(), [](const FieldValue& f) {
             return f.getLocalFilter();
         });
         return Value::Filter::chainAll(std::move(fset));
@@ -772,7 +788,7 @@ struct Where
     friend std::ostream& operator<<(std::ostream& s, const dht::Where& q);
 
 private:
-    std::vector<FilterDescription> filters_;
+    std::vector<FieldValue> filters_;
 };
 
 /**
@@ -781,7 +797,7 @@ private:
  * @details
  * This class describes the list of filters on field values and the field
  * itselves to include in the peer response to a GET operation. See
- * FilterDescription.
+ * FieldValue.
  */
 struct Query
 {

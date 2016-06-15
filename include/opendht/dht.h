@@ -318,8 +318,9 @@ private:
      */
     struct Get {
         time_point start;
-        std::shared_ptr<Query> query;
         Value::Filter filter;
+        std::shared_ptr<Query> query;
+        QueryCallback query_cb;
         GetCallback get_cb;
         DoneCallback done_cb;
     };
@@ -477,11 +478,16 @@ private:
     // Searches
 
     /**
-     * Low-level method that will perform a search on the DHT for the
-     * specified infohash (id), using the specified IP version (IPv4 or IPv6).
-     * The values can be filtered by an arbitrary provided filter.
+     * Creates a search (or finds a cached Search) structure with specified
+     * infohash (id), using the specified IP version (IPv4 or IPv6).
      */
-    std::shared_ptr<Search> search(const InfoHash& id, sa_family_t af, GetCallback = {}, DoneCallback = {}, Value::Filter = {}, Query q = {});
+    std::shared_ptr<Search> getSearch(const InfoHash& id, sa_family_t af);
+    /**
+     * Low-level method that will perform a search on the DHT for the
+     */
+    std::shared_ptr<Search> search(std::shared_ptr<Search> sr);
+    std::shared_ptr<Search> search(const InfoHash& id, sa_family_t af) { return search(getSearch(id, af)); }
+
     void announce(const InfoHash& id, sa_family_t af, std::shared_ptr<Value> value, DoneCallback callback, time_point created=time_point::max(), bool permanent = false);
     size_t listenTo(const InfoHash& id, sa_family_t af, GetCallback cb, Value::Filter f = Value::AllFilter(), const std::shared_ptr<Query>& q = {});
 
