@@ -622,8 +622,6 @@ struct FieldValueIndex {
     void msgpack_unpack_fields(const std::set<Value::Field>& fields,
             const msgpack::object& o,
             unsigned offset);
-
-private:
     std::map<Value::Field, FieldValue> index {};
 };
 
