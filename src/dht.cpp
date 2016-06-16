@@ -2688,7 +2688,7 @@ Dht::onGetValuesDone(const Request& status,
             sr->id.toString().c_str(), sr->af == AF_INET ? '4' : '6', status.node->toString().c_str(), a.nodes4.size());
 
     if (not a.ntoken.empty()) {
-        if (!a.values.empty()) {
+        if (not a.values.empty() or not a.sub_values.empty()) {
             DHT_LOG.DEBUG("[search %s IPv%c] found %u values",
                     sr->id.toString().c_str(), sr->af == AF_INET ? '4' : '6',
                     a.values.size());
@@ -2697,17 +2697,23 @@ Dht::onGetValuesDone(const Request& status,
                 if (not (get.get_cb or get.query_cb) or
                         (orig_query and get.query and not get.query->isSatisfiedBy(*orig_query)))
                     continue;
-                if (get.get_cb) {
+                if (get.query_cb and not a.sub_values.empty())
+                {
+                    DHT_LOG.DEBUG("query callback !");
+                    get.query_cb(a.sub_values);
+                }
+                else if (get.get_cb) {
                     std::vector<std::shared_ptr<Value>> tmp;
                     std::copy_if(a.values.begin(), a.values.end(), std::back_inserter(tmp),
                         [&](const std::shared_ptr<Value>& v) {
                             return not static_cast<bool>(get.filter) or get.filter(*v);
                         }
                     );
-                    if (not tmp.empty())
-                        get.get_cb(tmp);
-                } else if (get.query_cb and not a.sub_values.empty())
-                    get.query_cb(a.sub_values);
+                    if (not tmp.empty()) {
+                        DHT_LOG.DEBUG("get callback !");
+                            get.get_cb(tmp);
+                    }
+                }
             }
             std::vector<std::pair<GetCallback, std::vector<std::shared_ptr<Value>>>> tmp_lists;
             for (auto& l : sr->listeners) {
