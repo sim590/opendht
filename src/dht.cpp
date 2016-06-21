@@ -1563,9 +1563,48 @@ Dht::put(const InfoHash& id, std::shared_ptr<Value> val, DoneCallback callback, 
     }, created, permanent);
 }
 
+template <typename T>
 struct OpStatus {
-    bool done {false};
-    bool ok {false};
+    struct Status {
+        bool done {false};
+        bool ok {false};
+    };
+    Status status;
+    Status status4;
+    Status status6;
+    std::vector<std::shared_ptr<T>> values;
+    std::vector<std::shared_ptr<Node>> nodes;
+};
+
+template <typename T>
+void doneCallbackWrapper(DoneCallback dcb, const std::vector<std::shared_ptr<Node>>& nodes, std::shared_ptr<OpStatus<T>> op) {
+    if (op->status.done)
+        return;
+    op->nodes.insert(op->nodes.end(), nodes.begin(), nodes.end());
+    if (op->status.ok || (op->status4.done and op->status6.done)) {
+        bool ok = op->status.ok || op->status4.ok || op->status6.ok;
+        op->status.done = true;
+        if (dcb)
+            dcb(ok, op->nodes);
+    }
+};
+
+template <typename T, typename Cb>
+bool callbackWrapper(Cb get_cb,
+        DoneCallback done_cb,
+        const std::vector<std::shared_ptr<T>>& values,
+        std::function<std::vector<std::shared_ptr<T>>(const std::vector<std::shared_ptr<T>>&)> add_values,
+        std::shared_ptr<OpStatus<T>> op)
+{
+    if (op->status.done)
+        return false;
+    auto newvals = add_values(values);
+    if (not newvals.empty()) {
+        op->status.ok = !get_cb(newvals);
+        op->values.insert(op->values.end(), newvals.begin(), newvals.end());
+    }
+    doneCallbackWrapper(done_cb, {}, op);
+    return !op->status.ok;
 };
 
 void
@@ -1574,53 +1613,35 @@ Dht::get(const InfoHash& id, GetCallback getcb, DoneCallback donecb, Value::Filt
     scheduler.syncTime();
 
     Query q {{}, where};
-    auto status = std::make_shared<OpStatus>();
-    auto status4 = std::make_shared<OpStatus>();
-    auto status6 = std::make_shared<OpStatus>();
-    auto vals = std::make_shared<std::vector<std::shared_ptr<Value>>>();
-    auto all_nodes = std::make_shared<std::vector<std::shared_ptr<Node>>>();
-
-    auto done_l = [=](const std::vector<std::shared_ptr<Node>>& nodes) {
-        if (status->done)
-            return;
-        all_nodes->insert(all_nodes->end(), nodes.begin(), nodes.end());
-        if (status->ok || (status4->done && status6->done)) {
-            bool ok = status->ok || status4->ok || status6->ok;
-            status->done = true;
-            if (donecb)
-                donecb(ok, *all_nodes);
-        }
-    };
-    auto cb = [=](const std::vector<std::shared_ptr<Value>>& values) {
-        if (status->done)
-            return false;
-        std::vector<std::shared_ptr<Value>> newvals {};
-        for (const auto& v : values) {
-            auto it = std::find_if(vals->cbegin(), vals->cend(), [&](const std::shared_ptr<Value>& sv) {
-                return sv == v or *sv == *v;
-            });
-            if (it == vals->cend()) {
-                if (!filter || filter(*v))
-                    newvals.push_back(v);
-            }
-        }
-        if (!newvals.empty()) {
-            status->ok = !getcb(newvals);
-            vals->insert(vals->end(), newvals.begin(), newvals.end());
-        }
-        done_l({});
-        return !status->ok;
-    };
+    auto op = std::make_shared<OpStatus<Value>>();
 
     /* Try to answer this search locally. */
     auto f = filter.chain(q.getFilter());
-    cb(getLocal(id, f));
+    auto add_values = [=](const std::vector<std::shared_ptr<Value>>& values) {
+        std::vector<std::shared_ptr<Value>> newvals {};
+        for (const auto& v : values) {
+            auto it = std::find_if(op->values.cbegin(), op->values.cend(), [&](const std::shared_ptr<Value>& sv) {
+                return sv == v or *sv == *v;
+            });
+            if (it == op->values.cend()) {
+               if (not f or f(*v))
+                   newvals.push_back(v);
+            }
+        }
+        return newvals;
+    };
+    callbackWrapper<Value, GetCallback>(getcb, donecb, getLocal(id, f), add_values, op);
 
-    auto search = [&](std::shared_ptr<Search>& sr, DoneCallback&& dcb) {
+    auto search = [&](std::shared_ptr<Dht::Search>& sr, DoneCallback&& dcb) {
         if (sr) {
             auto now = scheduler.time();
             sr->callbacks.insert(std::make_pair<time_point, Get>(
-                    std::move(now), Get { scheduler.time(), f, std::make_shared<Query>(q), {}, cb, std::forward<DoneCallback>(dcb) }
+                std::move(now),
+                Get {
+                    scheduler.time(), f, std::make_shared<Query>(q), {},
+                    std::bind(callbackWrapper<Value, GetCallback>, getcb, donecb, _1, add_values, op),
+                    std::forward<DoneCallback>(dcb)
+                }
             ));
             Dht::search(sr);
         } else if (dcb)
@@ -1630,19 +1651,20 @@ Dht::get(const InfoHash& id, GetCallback getcb, DoneCallback donecb, Value::Filt
     auto sr4 = Dht::getSearch(id, AF_INET);
     search(sr4, [=](bool ok, const std::vector<std::shared_ptr<Node>>& nodes) {
         //DHT_LOG.WARN("DHT done IPv4");
-        status4->done = true;
-        status4->ok = ok;
-        done_l(nodes);
+        op->status4.done = true;
+        op->status4.ok = ok;
+        doneCallbackWrapper(donecb, nodes, op);
     });
 
     auto sr6 = Dht::getSearch(id, AF_INET6);
     search(sr6, [=](bool ok, const std::vector<std::shared_ptr<Node>>& nodes) {
         //DHT_LOG.WARN("DHT done IPv6");
-        status6->done = true;
-        status6->ok = ok;
-        done_l(nodes);
+        op->status6.done = true;
+        op->status6.ok = ok;
+        doneCallbackWrapper(donecb, nodes, op);
     });
 }
+
 
 std::vector<std::shared_ptr<Value>>
 Dht::getLocal(const InfoHash& id, Value::Filter f) const
@@ -2698,10 +2720,7 @@ Dht::onGetValuesDone(const Request& status,
                         (orig_query and get.query and not get.query->isSatisfiedBy(*orig_query)))
                     continue;
                 if (get.query_cb and not a.sub_values.empty())
-                {
-                    DHT_LOG.DEBUG("query callback !");
                     get.query_cb(a.sub_values);
-                }
                 else if (get.get_cb) {
                     std::vector<std::shared_ptr<Value>> tmp;
                     std::copy_if(a.values.begin(), a.values.end(), std::back_inserter(tmp),
@@ -2709,10 +2728,8 @@ Dht::onGetValuesDone(const Request& status,
                             return not static_cast<bool>(get.filter) or get.filter(*v);
                         }
                     );
-                    if (not tmp.empty()) {
-                        DHT_LOG.DEBUG("get callback !");
-                            get.get_cb(tmp);
-                    }
+                    if (not tmp.empty())
+                        get.get_cb(tmp);
                 }
             }
             std::vector<std::pair<GetCallback, std::vector<std::shared_ptr<Value>>>> tmp_lists;
