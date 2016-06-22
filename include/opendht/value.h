@@ -804,7 +804,7 @@ struct Query
      *  - $string$: a simple string WITHOUT SPACES.
      *  - $integer$: a simple integer.
      */
-    Query(const std::string& q_str) {
+    Query(std::string q_str) {
         auto pos_W = q_str.find("WHERE");
         auto pos_w = q_str.find("where");
         auto pos = std::min(pos_W != std::string::npos ? pos_W : q_str.size(),
@@ -812,20 +812,6 @@ struct Query
         select = q_str.substr(0, pos);
         where = q_str.substr(pos, q_str.size()-pos);
     }
-
-    /**
-     * Computes the set of selected fields based on previous require* calls.
-     *
-     * @return the set of fields.
-     */
-    std::set<Value::Field> getSelection() const { return select.getSelection(); }
-
-    /**
-     * Computes the Value::Filter based on the list of field value set.
-     *
-     * @return the resulting Value::Filter.
-     */
-    Value::Filter getFilter() const { return where.getFilter(); }
 
     /**
      * Tell if the query is satisfied by another query.
@@ -845,7 +831,6 @@ struct Query
         s << "Query[" << q.select << " " << q.where << "]";
     }
 
-private:
     Select select {};
     Where where {};
 };

@@ -1452,7 +1452,7 @@ Dht::listen(const InfoHash& id, GetCallback cb, Value::Filter&& f, Where&& where
     };
 
     auto query = std::make_shared<Query>(q);
-    auto filter = f.chain(q.getFilter());
+    auto filter = f.chain(q.where.getFilter());
     auto st = findStorage(id);
     size_t tokenlocal = 0;
     if (st == store.end() && store.size() < MAX_HASHES) {
@@ -1615,8 +1615,7 @@ Dht::get(const InfoHash& id, GetCallback getcb, DoneCallback donecb, Value::Filt
     Query q {{}, where};
     auto op = std::make_shared<OpStatus<Value>>();
 
-    /* Try to answer this search locally. */
-    auto f = filter.chain(q.getFilter());
+    auto f = filter.chain(q.where.getFilter());
     auto add_values = [=](const std::vector<std::shared_ptr<Value>>& values) {
         std::vector<std::shared_ptr<Value>> newvals {};
         for (const auto& v : values) {
@@ -1630,6 +1629,7 @@ Dht::get(const InfoHash& id, GetCallback getcb, DoneCallback donecb, Value::Filt
         }
         return newvals;
     };
+    /* Try to answer this search locally. */
     callbackWrapper<Value, GetCallback>(getcb, donecb, getLocal(id, f), add_values, op);
 
     auto search = [&](std::shared_ptr<Dht::Search>& sr, DoneCallback&& dcb) {
@@ -1670,8 +1670,7 @@ void Dht::query(const InfoHash& id, QueryCallback cb, DoneCallback done_cb, Quer
     scheduler.syncTime();
     auto op = std::make_shared<OpStatus<FieldValueIndex>>();
 
-    /* Try to answer this search locally. */
-    auto f = q.getFilter();
+    auto f = q.where.getFilter();
     auto values = getLocal(id, f);
     auto add_values = [=](const std::vector<std::shared_ptr<FieldValueIndex>>& fields) {
         std::vector<std::shared_ptr<FieldValueIndex>> newvals {};
@@ -1689,6 +1688,7 @@ void Dht::query(const InfoHash& id, QueryCallback cb, DoneCallback done_cb, Quer
     std::transform(values.begin(), values.end(), local_fields.begin(), [](const std::shared_ptr<Value>& v) {
         return std::make_shared<FieldValueIndex>(*v);
     });
+    /* Try to answer this search locally. */
     callbackWrapper<FieldValueIndex, QueryCallback>(cb, done_cb, local_fields, add_values, op);
 
     auto search = [&](std::shared_ptr<Dht::Search>& sr, DoneCallback&& dcb) {
@@ -1842,7 +1842,7 @@ Dht::storageChanged(Storage& st, ValueStorage& v)
 
     for (const auto& l : st.listeners) {
         DHT_LOG.DEBUG("Storage changed. Sending update to %s.", l.first->toString().c_str());
-        auto f = l.second.query.getFilter();
+        auto f = l.second.query.where.getFilter();
         if (f and not f(*v.data))
             continue;
         std::vector<std::shared_ptr<Value>> vals {};
@@ -1924,7 +1924,7 @@ Dht::storageAddListener(const InfoHash& id, const std::shared_ptr<Node>& node, s
     }
     auto l = st->listeners.find(node); /*TODO: tuple (node, query) will now identify the listen entry*/
     if (l == st->listeners.end()) {
-        auto vals = st->get(query.getFilter());
+        auto vals = st->get(query.where.getFilter());
         if (not vals.empty()) {
             network_engine.tellListener(node, rid, id, WANT4 | WANT6, makeToken((sockaddr*)&node->ss, false),
                     buckets.findClosestNodes(id, now, TARGET_NODES), buckets6.findClosestNodes(id, now, TARGET_NODES),
@@ -2747,7 +2747,7 @@ Dht::onGetValues(std::shared_ptr<Node> node, InfoHash& hash, want_t, const Query
     answer.nodes4 = buckets.findClosestNodes(hash, now, TARGET_NODES);
     answer.nodes6 = buckets6.findClosestNodes(hash, now, TARGET_NODES);
     if (st != store.end() && not st->empty()) {
-        answer.values = st->get(query.getFilter());
+        answer.values = st->get(query.where.getFilter());
         DHT_LOG.DEBUG("[node %s] sending %u values.", node->toString().c_str(), answer.values.size());
     } else {
         DHT_LOG.DEBUG("[node %s] sending nodes.", node->toString().c_str());

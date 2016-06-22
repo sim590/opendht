@@ -201,9 +201,9 @@ FieldValueIndex::FieldValueIndex(const Value& v, Select s)
     auto selection = s.getSelection();
     if (not selection.empty()) {
         std::transform(selection.begin(), selection.end(), std::inserter(index, index.end()),
-                [](const std::set<Value::Field>::value_type& f) {
+            [](const std::set<Value::Field>::value_type& f) {
                 return std::make_pair(f, FieldValue {});
-                });
+        });
     } else {
         index.clear();
         for (size_t f = 1 ; f < 5 ; ++f)
@@ -255,6 +255,7 @@ bool FieldValueIndex::operator==(const FieldValueIndex& other)
             return value_equal;
         });
 }
+
 std::ostream& operator<<(std::ostream& os, const FieldValueIndex& fvi) {
     os << "Index[";
     for (auto v = fvi.index.begin(); v != fvi.index.end(); ++v) {
