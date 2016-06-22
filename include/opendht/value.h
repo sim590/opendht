@@ -713,7 +713,6 @@ private:
 struct Where
 {
     Where() { }
-    Where(const Where& ow) = default;
     Where(const std::string& q_str);
 
     bool isSatisfiedBy(const Where& where) const;
@@ -819,8 +818,14 @@ struct Query
      *  - $string$: a simple string WITHOUT SPACES.
      *  - $integer$: a simple integer.
      */
-    /*TODO: robustly seperate SELECT from WHERE string. */
-    /*Query(const std::string& q_str) { }*/
+    Query(const std::string& q_str) {
+        auto pos_W = q_str.find("WHERE");
+        auto pos_w = q_str.find("where");
+        auto pos = std::min(pos_W != std::string::npos ? pos_W : q_str.size(),
+                            pos_w != std::string::npos ? pos_w : q_str.size());
+        select = q_str.substr(0, pos);
+        where = q_str.substr(pos, q_str.size()-pos);
+    }
 
     /**
      * Computes the set of selected fields based on previous require* calls.
