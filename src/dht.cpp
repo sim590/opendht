@@ -2756,9 +2756,18 @@ Dht::onGetValuesDone(const Request& status,
                 if (not (get.get_cb or get.query_cb) or
                         (orig_query and get.query and not get.query->isSatisfiedBy(*orig_query)))
                     continue;
-                if (get.query_cb and not a.fields.empty())
-                    get.query_cb(a.fields);
-                else if (get.get_cb) {
+                if (get.query_cb) {
+                    if (not a.fields.empty()) {
+                        get.query_cb(a.fields);
+                    } else if (not a.values.empty()) {
+                        std::vector<std::shared_ptr<FieldValueIndex>> fields(a.values.size());
+                        std::transform(a.values.begin(), a.values.end(), fields.begin(),
+                            [&](const std::shared_ptr<Value>& v) {
+                                return std::make_shared<FieldValueIndex>(*v, orig_query ? orig_query->select : Select {});
+                        });
+                        get.query_cb(fields);
+                    }
+                } else if (get.get_cb) {
                     std::vector<std::shared_ptr<Value>> tmp;
                     std::copy_if(a.values.begin(), a.values.end(), std::back_inserter(tmp),
                         [&](const std::shared_ptr<Value>& v) {
