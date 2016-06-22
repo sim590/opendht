@@ -230,30 +230,15 @@ FieldValueIndex::FieldValueIndex(const Value& v, Select s)
     }
 }
 
-bool FieldValueIndex::operator==(const FieldValueIndex& other)
-{
-    return std::equal(index.begin(), index.end(), other.index.begin(),
-        [](const std::map<Value::Field, FieldValue>::value_type& lhs,
-           const std::map<Value::Field, FieldValue>::value_type& rhs) {
-            if (lhs.first != rhs.first)
-                return false;
-            auto value_equal = false;
-            switch (lhs.first) {
-                case Value::Field::Id:
-                case Value::Field::ValueType:
-                    value_equal = lhs.second.getInt() == rhs.second.getInt();
-                    break;
-                case Value::Field::OwnerPk:
-                    value_equal = lhs.second.getHash() == rhs.second.getHash();
-                    break;
-                case Value::Field::UserType:
-                    value_equal = lhs.second.getBlob() == rhs.second.getBlob();
-                    break;
-                default:
-                    break;
-            }
-            return value_equal;
-        });
+bool FieldValueIndex::containedIn(const FieldValueIndex& other) {
+    if (index.size() > other.index.size())
+        return false;
+    for (const auto& field : index) {
+        auto other_field = other.index.find(field.first);
+        if (other_field == other.index.end())
+            return false;
+    }
+    return true;
 }
 
 std::ostream& operator<<(std::ostream& os, const FieldValueIndex& fvi) {
@@ -261,7 +246,7 @@ std::ostream& operator<<(std::ostream& os, const FieldValueIndex& fvi) {
     for (auto v = fvi.index.begin(); v != fvi.index.end(); ++v) {
         switch (v->first) {
             case Value::Field::Id:
-                os << "Id:" << v->second.getInt();
+                os << "Id:" << std::hex << v->second.getInt();
                 break;
             case Value::Field::ValueType:
                 os << "ValueType:" << v->second.getInt();

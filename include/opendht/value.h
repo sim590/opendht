@@ -686,7 +686,7 @@ struct Select
 
     friend std::ostream& operator<<(std::ostream& s, const dht::Select& q);
 private:
-    std::vector<FieldSelectorDescription> fieldSelection_;
+    std::vector<FieldSelectorDescription> fieldSelection_ {};
 };
 
 /**
@@ -845,7 +845,7 @@ struct Query
 struct FieldValueIndex {
     FieldValueIndex() {}
     FieldValueIndex(const Value& v, Select s = {});
-    bool operator==(const FieldValueIndex& other);
+    bool containedIn(const FieldValueIndex& other);
     friend std::ostream& operator<<(std::ostream& os, const FieldValueIndex& fvi);
     void msgpack_unpack_fields(const std::set<Value::Field>& fields,
             const msgpack::object& o,

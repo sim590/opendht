@@ -1661,15 +1661,22 @@ void Dht::query(const InfoHash& id, QueryCallback cb, DoneCallback done_cb, Quer
 
     auto f = q.where.getFilter();
     auto values = getLocal(id, f);
-    auto add_values = [=](const std::vector<std::shared_ptr<FieldValueIndex>>& fields) {
+    auto add_fields = [=](const std::vector<std::shared_ptr<FieldValueIndex>>& fields) {
         std::vector<std::shared_ptr<FieldValueIndex>> newvals {};
-        for (const auto& v : fields) {
-            auto it = std::find_if(op->fields.cbegin(), op->fields.cend(),
-                [&](const std::shared_ptr<FieldValueIndex>& sv) {
-                    return sv == v or *sv == *v;
+        for (const auto& f : fields) {
+            auto it = std::find_if(op->values.cbegin(), op->values.cend(),
+                [&](const std::shared_ptr<FieldValueIndex>& sf) {
+                    return sf == f or f->containedIn(*sf);
                 });
-            if (it == op->fields.cend())
-                newvals.push_back(v);
+            if (it == op->values.cend()) {
+                auto lesser = std::find_if(op->values.begin(), op->values.end(),
+                    [&](const std::shared_ptr<FieldValueIndex>& sf) {
+                        return sf->containedIn(*f);
+                    });
+                if (lesser != op->values.end())
+                    op->values.erase(lesser);
+                newvals.push_back(f);
+            }
         }
         return newvals;
     };
