@@ -443,6 +443,13 @@ DhtRunner::get(const std::string& key, GetCallback vcb, DoneCallbackSimple dcb, 
 {
     get(InfoHash::get(key), vcb, dcb, f, w);
 }
+void DhtRunner::query(const InfoHash& hash, QueryCallback cb, DoneCallback done_cb, Query q) {
+    std::lock_guard<std::mutex> lck(storage_mtx);
+    pending_ops.emplace([=](SecureDht& dht) mutable {
+        dht.query(hash, cb, done_cb, std::move(q));
+    });
+    cv.notify_all();
+}
 
 std::future<size_t>
 DhtRunner::listen(InfoHash hash, GetCallback vcb, Value::Filter f, Where w)

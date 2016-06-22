@@ -1665,6 +1665,64 @@ Dht::get(const InfoHash& id, GetCallback getcb, DoneCallback donecb, Value::Filt
     });
 }
 
+void Dht::query(const InfoHash& id, QueryCallback cb, DoneCallback done_cb, Query&& q)
+{
+    scheduler.syncTime();
+    auto op = std::make_shared<OpStatus<FieldValueIndex>>();
+
+    /* Try to answer this search locally. */
+    auto f = q.getFilter();
+    auto values = getLocal(id, f);
+    auto add_values = [=](const std::vector<std::shared_ptr<FieldValueIndex>>& fields) {
+        std::vector<std::shared_ptr<FieldValueIndex>> newvals {};
+        for (const auto& v : fields) {
+            auto it = std::find_if(op->fields.cbegin(), op->fields.cend(),
+                [&](const std::shared_ptr<FieldValueIndex>& sv) {
+                    return sv == v or *sv == *v;
+                });
+            if (it == op->fields.cend())
+                newvals.push_back(v);
+        }
+        return newvals;
+    };
+    std::vector<std::shared_ptr<FieldValueIndex>> local_fields(values.size());
+    std::transform(values.begin(), values.end(), local_fields.begin(), [](const std::shared_ptr<Value>& v) {
+        return std::make_shared<FieldValueIndex>(*v);
+    });
+    callbackWrapper<FieldValueIndex, QueryCallback>(cb, done_cb, local_fields, add_values, op);
+
+    auto search = [&](std::shared_ptr<Dht::Search>& sr, DoneCallback&& dcb) {
+        if (sr) {
+            auto now = scheduler.time();
+            sr->callbacks.insert(std::make_pair<time_point, Get>(
+                std::move(now),
+                Get {
+                    scheduler.time(), f, std::make_shared<Query>(q),
+                    std::bind(callbackWrapper<FieldValueIndex, QueryCallback>, cb, done_cb, _1, add_values, op), {},
+                    std::forward<DoneCallback>(dcb)
+                }
+            ));
+            Dht::search(sr);
+        } else if (dcb)
+            dcb(false, {});
+    };
+
+    auto sr4 = Dht::getSearch(id, AF_INET);
+    search(sr4, [=](bool ok, const std::vector<std::shared_ptr<Node>>& nodes) {
+        //DHT_LOG.WARN("DHT done IPv4");
+        op->status4.done = true;
+        op->status4.ok = ok;
+        doneCallbackWrapper(done_cb, nodes, op);
+    });
+
+    auto sr6 = Dht::getSearch(id, AF_INET6);
+    search(sr6, [=](bool ok, const std::vector<std::shared_ptr<Node>>& nodes) {
+        //DHT_LOG.WARN("DHT done IPv6");
+        op->status6.done = true;
+        op->status6.ok = ok;
+        doneCallbackWrapper(done_cb, nodes, op);
+    });
+}
 
 std::vector<std::shared_ptr<Value>>
 Dht::getLocal(const InfoHash& id, Value::Filter f) const
@@ -1864,7 +1922,7 @@ Dht::storageAddListener(const InfoHash& id, const std::shared_ptr<Node>& node, s
         store.emplace_back(id, now);
         st = std::prev(store.end());
     }
-    auto l = st->listeners.find(node);
+    auto l = st->listeners.find(node); /*TODO: tuple (node, query) will now identify the listen entry*/
     if (l == st->listeners.end()) {
         auto vals = st->get(query.getFilter());
         if (not vals.empty()) {
@@ -2710,7 +2768,7 @@ Dht::onGetValuesDone(const Request& status,
             sr->id.toString().c_str(), sr->af == AF_INET ? '4' : '6', status.node->toString().c_str(), a.nodes4.size());
 
     if (not a.ntoken.empty()) {
-        if (not a.values.empty() or not a.sub_values.empty()) {
+        if (not a.values.empty() or not a.fields.empty()) {
             DHT_LOG.DEBUG("[search %s IPv%c] found %u values",
                     sr->id.toString().c_str(), sr->af == AF_INET ? '4' : '6',
                     a.values.size());
@@ -2719,8 +2777,8 @@ Dht::onGetValuesDone(const Request& status,
                 if (not (get.get_cb or get.query_cb) or
                         (orig_query and get.query and not get.query->isSatisfiedBy(*orig_query)))
                     continue;
-                if (get.query_cb and not a.sub_values.empty())
-                    get.query_cb(a.sub_values);
+                if (get.query_cb and not a.fields.empty())
+                    get.query_cb(a.fields);
                 else if (get.get_cb) {
                     std::vector<std::shared_ptr<Value>> tmp;
                     std::copy_if(a.values.begin(), a.values.end(), std::back_inserter(tmp),

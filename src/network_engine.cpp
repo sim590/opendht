@@ -75,7 +75,7 @@ struct ParsedMessage {
     Blob nodes4_raw, nodes6_raw;                              /* IPv4 nodes in response to a 'find' request */
     std::vector<std::shared_ptr<Node>> nodes4, nodes6;
     std::vector<std::shared_ptr<Value>> values;               /* values for a 'get' request */
-    std::vector<std::shared_ptr<FieldValueIndex>> sub_values; /* index for fields values */
+    std::vector<std::shared_ptr<FieldValueIndex>> fields; /* index for fields values */
     Query query;                                              /* query describing a filter to apply on values. */
     want_t want;                                              /* states if ipv4 or ipv6 request */
     uint16_t error_code;                                      /* error code in case of error */
@@ -85,7 +85,7 @@ struct ParsedMessage {
 };
 
 NetworkEngine::RequestAnswer::RequestAnswer(ParsedMessage&& msg)
- : ntoken(std::move(msg.token)), values(std::move(msg.values)), sub_values(std::move(msg.sub_values)),
+ : ntoken(std::move(msg.token)), values(std::move(msg.values)), fields(std::move(msg.fields)),
     nodes4(std::move(msg.nodes4)), nodes6(std::move(msg.nodes6)) {}
 
 void
@@ -1090,15 +1090,15 @@ ParsedMessage::msgpack_unpack(msgpack::object msg)
             }
     } else if (auto raw_fields = findMapValue(req, "fields")) {
         if (auto rfields = findMapValue(*raw_fields, "f")) {
-            auto fields = rfields->as<std::set<Value::Field>>();
+            auto fields_ = rfields->as<std::set<Value::Field>>();
             if (auto rvalues = findMapValue(*raw_fields, "v")) {
                 if (rvalues->type != msgpack::type::ARRAY)
                     throw msgpack::type_error();
                 for (size_t i = 0; i < rvalues->via.array.size; ++i) {
                     try {
                         auto v = std::make_shared<FieldValueIndex>();
-                        v->msgpack_unpack_fields(fields, *rvalues, i*fields.size());
-                        sub_values.emplace_back(std::move(v));
+                        v->msgpack_unpack_fields(fields_, *rvalues, i*fields.size());
+                        fields.emplace_back(std::move(v));
                     } catch (const std::exception& e) { }
                 }
             }
