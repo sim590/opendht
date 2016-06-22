@@ -486,15 +486,10 @@ private:
     // Searches
 
     /**
-     * Creates a search (or finds a cached Search) structure with specified
+     * Low-level method that will perform a search on the DHT for the specified
      * infohash (id), using the specified IP version (IPv4 or IPv6).
      */
-    std::shared_ptr<Search> getSearch(const InfoHash& id, sa_family_t af);
-    /**
-     * Low-level method that will perform a search on the DHT for the
-     */
-    std::shared_ptr<Search> search(std::shared_ptr<Search> sr);
-    std::shared_ptr<Search> search(const InfoHash& id, sa_family_t af) { return search(getSearch(id, af)); }
+    std::shared_ptr<Search> search(const InfoHash& id, sa_family_t af, GetCallback = {}, QueryCallback = {}, DoneCallback = {}, Value::Filter = {}, Query q = {});
 
     void announce(const InfoHash& id, sa_family_t af, std::shared_ptr<Value> value, DoneCallback callback, time_point created=time_point::max(), bool permanent = false);
     size_t listenTo(const InfoHash& id, sa_family_t af, GetCallback cb, Value::Filter f = Value::AllFilter(), const std::shared_ptr<Query>& q = {});
