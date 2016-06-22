@@ -200,7 +200,7 @@ struct Value
 
     static Filter ownerFilter(const InfoHash& pkh) {
         return [pkh](const Value& v) {
-            return v.owner->getId() == pkh;
+            return v.owner and v.owner->getId() == pkh;
         };
     }
 
@@ -463,7 +463,10 @@ struct Value
                     pk.pack(type);
                     break;
                 case Value::Field::OwnerPk:
-                    owner->msgpack_pack(pk);
+                    if (owner)
+                        owner->msgpack_pack(pk);
+                    else
+                        InfoHash().msgpack_pack(pk);
                     break;
                 case Value::Field::UserType:
                     pk.pack(user_type);
