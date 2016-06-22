@@ -196,6 +196,91 @@ FieldValue::getLocalFilter() const
     }
 }
 
+FieldValueIndex::FieldValueIndex(const Value& v, Select s)
+{
+    auto selection = s.getSelection();
+    if (not selection.empty()) {
+        std::transform(selection.begin(), selection.end(), std::inserter(index, index.end()),
+                [](const std::set<Value::Field>::value_type& f) {
+                return std::make_pair(f, FieldValue {});
+                });
+    } else {
+        index.clear();
+        for (size_t f = 1 ; f < 5 ; ++f)
+            index[static_cast<Value::Field>(f)] = {};
+    }
+    for (const auto& fvp : index) {
+        const auto& f = fvp.first;
+        switch (f) {
+            case Value::Field::Id:
+                index[f] = {f, v.id};
+                break;
+            case Value::Field::ValueType:
+                index[f] = {f, v.type};
+                break;
+            case Value::Field::OwnerPk:
+                index[f] = {f, v.owner ? v.owner->getId() : InfoHash() };
+                break;
+            case Value::Field::UserType:
+                index[f] = {f, Blob {v.user_type.begin(), v.user_type.end()}};
+                break;
+            default:
+                break;
+        }
+    }
+}
+
+bool FieldValueIndex::operator==(const FieldValueIndex& other)
+{
+    return std::equal(index.begin(), index.end(), other.index.begin(),
+        [](const std::map<Value::Field, FieldValue>::value_type& lhs,
+           const std::map<Value::Field, FieldValue>::value_type& rhs) {
+            if (lhs.first != rhs.first)
+                return false;
+            auto value_equal = false;
+            switch (lhs.first) {
+                case Value::Field::Id:
+                case Value::Field::ValueType:
+                    value_equal = lhs.second.getInt() == rhs.second.getInt();
+                    break;
+                case Value::Field::OwnerPk:
+                    value_equal = lhs.second.getHash() == rhs.second.getHash();
+                    break;
+                case Value::Field::UserType:
+                    value_equal = lhs.second.getBlob() == rhs.second.getBlob();
+                    break;
+                default:
+                    break;
+            }
+            return value_equal;
+        });
+}
+std::ostream& operator<<(std::ostream& os, const FieldValueIndex& fvi) {
+    os << "Index[";
+    for (auto v = fvi.index.begin(); v != fvi.index.end(); ++v) {
+        switch (v->first) {
+            case Value::Field::Id:
+                os << "Id:" << v->second.getInt();
+                break;
+            case Value::Field::ValueType:
+                os << "ValueType:" << v->second.getInt();
+                break;
+            case Value::Field::OwnerPk:
+                os << "Owner:" << v->second.getHash().toString();
+                break;
+            case Value::Field::UserType: {
+                auto ut = v->second.getBlob();
+                os << "UserType:" << std::string(ut.begin(), ut.end());
+                break;
+            }
+            default:
+                break;
+        }
+        os << (std::next(v) != fvi.index.end() ? "," : "");
+    }
+    return os << "]";
+}
+
 void
 FieldValueIndex::msgpack_unpack_fields(const std::set<Value::Field>& fields, const msgpack::object& o, unsigned offset)
 {

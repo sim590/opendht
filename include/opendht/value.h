@@ -117,7 +117,7 @@ struct ValueType {
 struct Value
 {
     enum class Field {
-        None,
+        None = 0,
         Id,
         ValueType,
         OwnerPk,
@@ -614,20 +614,6 @@ private:
     Blob blobValue {};
 };
 
-/*!
- * @class   FieldValueIndex
- * @brief   An index for field values.
- * @details
- * This structures is meant to manipulate a subset of fields normally contained
- * in Value.
- */
-struct FieldValueIndex {
-    void msgpack_unpack_fields(const std::set<Value::Field>& fields,
-            const msgpack::object& o,
-            unsigned offset);
-    std::map<Value::Field, FieldValue> index {};
-};
-
 
 /**
  * @struct  FieldSelectorDescription
@@ -862,6 +848,24 @@ struct Query
 private:
     Select select {};
     Where where {};
+};
+
+/*!
+ * @class   FieldValueIndex
+ * @brief   An index for field values.
+ * @details
+ * This structures is meant to manipulate a subset of fields normally contained
+ * in Value.
+ */
+struct FieldValueIndex {
+    FieldValueIndex() {}
+    FieldValueIndex(const Value& v, Select s = {});
+    bool operator==(const FieldValueIndex& other);
+    friend std::ostream& operator<<(std::ostream& os, const FieldValueIndex& fvi);
+    void msgpack_unpack_fields(const std::set<Value::Field>& fields,
+            const msgpack::object& o,
+            unsigned offset);
+    std::map<Value::Field, FieldValue> index {};
 };
 
 template <typename T,
