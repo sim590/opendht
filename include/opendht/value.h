@@ -827,6 +827,12 @@ struct Query
 
     void msgpack_unpack(const msgpack::object& o);
 
+    std::string toString() const {
+        std::stringstream ss {};
+        ss << *this;
+        return ss.str();
+    }
+
     friend std::ostream& operator<<(std::ostream& s, const dht::Query& q) {
         s << "Query[" << q.select << " " << q.where << "]";
     }
@@ -845,6 +851,13 @@ struct Query
 struct FieldValueIndex {
     FieldValueIndex() {}
     FieldValueIndex(const Value& v, Select s = {});
+
+    std::string toString() const {
+        std::stringstream ss {};
+        ss << *this;
+        return ss.str();
+    }
+
     /**
      * Tells if all the fields of this are contained in the other
      * FieldValueIndex with the same value.
