@@ -24,6 +24,27 @@ bindGetCb(GetCallbackSimple cb)
     };
 }
 
+QueryCallbackSimple
+bindQueryCb(QueryCallbackRaw raw_cb, void* user_data)
+{
+    if (not raw_cb) return {};
+    return [=](const std::shared_ptr<FieldValueIndex>& field) {
+        return raw_cb(field, user_data);
+    };
+}
+
+QueryCallback
+bindQueryCb(QueryCallbackSimple cb)
+{
+    if (not cb) return {};
+    return [=](const std::vector<std::shared_ptr<FieldValueIndex>>& fields) {
+        for (const auto& v : fields)
+            if (not cb(v))
+                return false;
+        return true;
+    };
+}
+
 ShutdownCallback
 bindShutdownCb(ShutdownCallbackRaw shutdown_cb_raw, void* user_data)
 {

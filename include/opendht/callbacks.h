@@ -46,7 +46,7 @@ struct Config {
     /** DHT node ID */
     InfoHash node_id;
 
-    /** 
+    /**
      * DHT network ID. A node will only talk with other nodes having
      * the same network ID.
      * Network ID 0 (default) represents the main public network.
@@ -71,6 +71,7 @@ static constexpr size_t DEFAULT_STORAGE_LIMIT {1024 * 1024 * 64};
 using ValuesExport = std::pair<InfoHash, Blob>;
 
 using QueryCallback = std::function<bool(const std::vector<std::shared_ptr<FieldValueIndex>>& fields)>;
+using QueryCallbackSimple = std::function<bool(const std::shared_ptr<FieldValueIndex>& field)>;
 using GetCallback = std::function<bool(const std::vector<std::shared_ptr<Value>>& values)>;
 using GetCallbackSimple = std::function<bool(std::shared_ptr<Value> value)>;
 using ShutdownCallback = std::function<void()>;
@@ -78,9 +79,12 @@ using ShutdownCallback = std::function<void()>;
 using CertificateStoreQuery = std::function<std::vector<std::shared_ptr<crypto::Certificate>>(const InfoHash& pk_id)>;
 
 typedef bool (*GetCallbackRaw)(std::shared_ptr<Value>, void *user_data);
+typedef bool (*QueryCallbackRaw)(std::shared_ptr<FieldValueIndex>, void *user_data);
 
 GetCallbackSimple bindGetCb(GetCallbackRaw raw_cb, void* user_data);
 GetCallback bindGetCb(GetCallbackSimple cb);
+QueryCallbackSimple bindQueryCb(QueryCallbackRaw raw_cb, void* user_data);
+QueryCallback bindQueryCb(QueryCallbackSimple cb);
 
 using DoneCallback = std::function<void(bool success, const std::vector<std::shared_ptr<Node>>& nodes)>;
 typedef void (*DoneCallbackRaw)(bool, std::vector<std::shared_ptr<Node>>*, void *user_data);

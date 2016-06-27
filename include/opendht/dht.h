@@ -160,6 +160,12 @@ public:
     virtual void query(const InfoHash& key, QueryCallback cb, DoneCallbackSimple done_cb = {}, Query&& q = {}) {
         query(key, cb, bindDoneCb(done_cb), std::forward<Query>(q));
     }
+    virtual void query(const InfoHash& key, QueryCallbackSimple cb, DoneCallback done_cb = {}, Query&& q = {}) {
+        query(key, bindQueryCb(cb), done_cb, std::forward<Query>(q));
+    }
+    virtual void query(const InfoHash& key, QueryCallbackSimple cb, DoneCallbackSimple done_cb = {}, Query&& q = {}) {
+        query(key, bindQueryCb(cb), bindDoneCb(done_cb), std::forward<Query>(q));
+    }
 
     /**
      * Get locally stored data for the given hash.

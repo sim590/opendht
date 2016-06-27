@@ -123,8 +123,14 @@ public:
     }
 
     void query(const InfoHash& hash, QueryCallback cb, DoneCallback done_cb = {}, Query q = {});
+    void query(const InfoHash& hash, QueryCallbackSimple cb, DoneCallback done_cb = {}, Query q = {}) {
+        query(hash, bindQueryCb(cb), done_cb, q);
+    }
     void query(const InfoHash& hash, QueryCallback cb, DoneCallbackSimple done_cb = {}, Query q = {}) {
         query(hash, cb, bindDoneCb(done_cb), q);
+    }
+    void query(const InfoHash& hash, QueryCallbackSimple cb, DoneCallbackSimple done_cb = {}, Query q = {}) {
+        query(hash, bindQueryCb(cb), bindDoneCb(done_cb), q);
     }
 
     std::future<size_t> listen(InfoHash key, GetCallback vcb, Value::Filter f = Value::AllFilter(), Where w = {});
