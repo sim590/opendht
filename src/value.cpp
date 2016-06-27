@@ -230,7 +230,7 @@ FieldValueIndex::FieldValueIndex(const Value& v, Select s)
     }
 }
 
-bool FieldValueIndex::containedIn(const FieldValueIndex& other) {
+bool FieldValueIndex::containedIn(const FieldValueIndex& other) const {
     if (index.size() > other.index.size())
         return false;
     for (const auto& field : index) {

@@ -845,11 +845,20 @@ struct Query
 struct FieldValueIndex {
     FieldValueIndex() {}
     FieldValueIndex(const Value& v, Select s = {});
-    bool containedIn(const FieldValueIndex& other);
+    /**
+     * Tells if all the fields of this are contained in the other
+     * FieldValueIndex with the same value.
+     *
+     * @param other  The other FieldValueIndex instance.
+     */
+    bool containedIn(const FieldValueIndex& other) const;
+
     friend std::ostream& operator<<(std::ostream& os, const FieldValueIndex& fvi);
+
     void msgpack_unpack_fields(const std::set<Value::Field>& fields,
             const msgpack::object& o,
             unsigned offset);
+
     std::map<Value::Field, FieldValue> index {};
 };
 
