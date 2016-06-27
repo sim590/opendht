@@ -52,6 +52,12 @@ cdef inline bool get_callback(cpp.shared_ptr[cpp.Value] value, void *user_data) 
     pv._value = value
     return cb(pv)
 
+cdef inline bool query_callback(cpp.shared_ptr[cpp.FieldValueIndex] index, void *user_data) with gil:
+    cb = (<object>user_data)['query']
+    pi = FieldValueIndex()
+    pi._index = index
+    return cb(pi)
+
 cdef inline void done_callback(bool done, cpp.vector[cpp.shared_ptr[cpp.Node]]* nodes, void *user_data) with gil:
     node_ids = []
     for n in deref(nodes):
@@ -161,6 +167,34 @@ cdef class Value(object):
     property size:
         def __get__(self):
             return self._value.get().size()
+
+cdef class Query(object):
+    cdef cpp.Query _query
+    def __init__(self, bytes q_str=b''):
+        self._query = cpp.Query(q_str)
+    def __str__(self):
+        return self._query.toString().decode()
+
+cdef class FieldValueIndex(object):
+    cdef cpp.shared_ptr[cpp.FieldValueIndex] _index
+    def __init__(self):
+        self._index.reset(new cpp.FieldValueIndex())
+    def __str__(self):
+        return self._index.get().toString().decode()
+    property id:
+        def __get__(self):
+            return self._index.get().index[cpp.Value.Field.Id].getInt()
+    property value_type:
+        def __get__(self):
+            return self._index.get().index[Value.Field.ValueType].getInt()
+    property owner:
+        def __get__(self):
+            h = InfoHash()
+            h._infohash = self._index.get().index[cpp.Value.Field.OwnerPk].getHash()
+            return h
+    property user_type:
+        def __get__(self):
+            return self._index.get().index[Value.Field.UserType].getBlob()
 
 cdef class NodeSetIter(object):
     cdef map[cpp.InfoHash, cpp.shared_ptr[cpp.Node]]* _nodes
@@ -305,7 +339,7 @@ cdef class DhtRunner(_WithID):
         """Retreive values associated with a key on the DHT.
 
         key -- the key for which to search
-        get_cb -- is set, makes the operation non-blocking. Called when a value is found on the DHT.
+        get_cb -- if set, makes the operation non-blocking. Called when a value is found on the DHT.
         done_cb -- optional callback used when get_cb is set. Called when the operation is completed.
         """
         if get_cb:
@@ -331,6 +365,39 @@ cdef class DhtRunner(_WithID):
                 while pending > 0:
                     lock.wait()
             return res
+
+    def query(self, InfoHash key, query_cb=None, done_cb=None, Query query=None):
+        """Retrieves Value fields for a value associated with a key on the DHT.
+
+        key -- the key for which to search.
+        query_cb -- if set, makes the operation non-blocking. Called when a field value index is found on the DHT.
+        done_cb -- optional callback used when query_cb is set. Called when the operation is completed.
+        query -- an sql-ish type of query for specifying the fields and or field contents.
+        """
+        if query_cb:
+            cb_obj = {'query':query_cb, 'done':done_cb}
+            ref.Py_INCREF(cb_obj)
+            self.thisptr.query(key._infohash, cpp.bindQueryCb(query_callback, <void*>cb_obj), cpp.bindDoneCb(done_callback, <void*>cb_obj), query._query)
+        else:
+            lock = threading.Condition()
+            pending = 0
+            res = []
+            def tmp_get(i):
+                nonlocal res
+                res.append(i)
+                return True
+            def tmp_done(ok, nodes):
+                nonlocal pending, lock
+                with lock:
+                    pending -= 1
+                    lock.notify()
+            with lock:
+                pending += 1
+                self.query(key, query_cb=tmp_get, done_cb=tmp_done, query=query)
+                while pending > 0:
+                    lock.wait()
+            return res
+
     def put(self, InfoHash key, Value val, done_cb=None):
         """Publish a new value on the DHT at key.
 
@@ -358,6 +425,7 @@ cdef class DhtRunner(_WithID):
                 while pending > 0:
                     lock.wait()
             return ok
+
     def listen(self, InfoHash key, get_cb):
         t = ListenToken()
         t._h = key._infohash
@@ -367,6 +435,7 @@ cdef class DhtRunner(_WithID):
         ref.Py_INCREF(cb_obj)
         t._t = self.thisptr.listen(t._h, cpp.bindGetCb(get_callback, <void*>cb_obj)).share()
         return t
+
     def cancelListen(self, ListenToken token):
         self.thisptr.cancelListen(token._h, token._t)
         ref.Py_DECREF(<object>token._cb['cb'])

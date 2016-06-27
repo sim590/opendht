@@ -20,6 +20,7 @@ from libcpp cimport bool
 from libcpp.string cimport string
 from libcpp.vector cimport vector
 from libcpp.utility cimport pair
+from libcpp.map cimport map
 
 ctypedef uint16_t in_port_t
 ctypedef unsigned short int sa_family_t;
@@ -80,6 +81,14 @@ cdef extern from "opendht/crypto.h" namespace "dht::crypto":
         InfoHash getId() const
 
 cdef extern from "opendht/value.h" namespace "dht":
+    cdef enum _Field "dht::Value::Field":
+       None "dht::Value::Field::None"
+       Id "dht::Value::Field::Id"
+       ValueType "dht::Value::Field::ValueType"
+       OwnerPk "dht::Value::Field::OwnerPk"
+       UserType "dht::Value::Field::UserType"
+    ctypedef _Field Field
+
     cdef cppclass Value:
         Value() except +
         Value(vector[uint8_t]) except +
@@ -92,6 +101,24 @@ cdef extern from "opendht/value.h" namespace "dht":
         vector[uint8_t] data
         string user_type
 
+    cdef cppclass FieldValue:
+        FieldValue()
+        int getField() const
+        uint64_t getInt() const
+        InfoHash getHash() const
+        vector[uint8_t] getBlob() const
+
+    cdef cppclass Query:
+        Query()
+        Query(string q_str)
+        string toString() const
+
+    cdef cppclass FieldValueIndex:
+        FieldValueIndex()
+        string toString() const
+        map[Value.Field, FieldValue] index
+        #map[int, FieldValue] index
+
 cdef extern from "opendht/node.h" namespace "dht":
     cdef cppclass Node:
         Node() except +
@@ -102,6 +129,7 @@ cdef extern from "opendht/node.h" namespace "dht":
 cdef extern from "opendht/callbacks.h" namespace "dht":
     ctypedef void (*ShutdownCallbackRaw)(void *user_data)
     ctypedef bool (*GetCallbackRaw)(shared_ptr[Value] values, void *user_data)
+    ctypedef bool (*QueryCallbackRaw)(shared_ptr[FieldValueIndex] fields, void *user_data)
     ctypedef void (*DoneCallbackRaw)(bool done, vector[shared_ptr[Node]]* nodes, void *user_data)
 
     cppclass ShutdownCallback:
@@ -109,12 +137,15 @@ cdef extern from "opendht/callbacks.h" namespace "dht":
     cppclass GetCallback:
         GetCallback() except +
         #GetCallback(GetCallbackRaw cb, void *user_data) except +
+    cppclass QueryCallback:
+        QueryCallback() except +
     cppclass DoneCallback:
         DoneCallback() except +
         #DoneCallback(DoneCallbackRaw, void *user_data) except +
 
     cdef ShutdownCallback bindShutdownCb(ShutdownCallbackRaw cb, void *user_data)
     cdef GetCallback bindGetCb(GetCallbackRaw cb, void *user_data)
+    cdef QueryCallback bindQueryCb(QueryCallbackRaw cb, void *user_data)
     cdef DoneCallback bindDoneCb(DoneCallbackRaw cb, void *user_data)
 
     cppclass Config:
@@ -144,6 +175,7 @@ cdef extern from "opendht/dhtrunner.h" namespace "dht":
         string getRoutingTablesLog(sa_family_t af) const
         string getSearchesLog(sa_family_t af) const
         void get(InfoHash key, GetCallback get_cb, DoneCallback done_cb)
+        void query(InfoHash key, QueryCallback cb, DoneCallback done_cb, Query q);
         void put(InfoHash key, shared_ptr[Value] val, DoneCallback done_cb)
         ListenToken listen(InfoHash key, GetCallback get_cb)
         void cancelListen(InfoHash key, SharedListenToken token)
