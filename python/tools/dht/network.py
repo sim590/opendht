@@ -332,9 +332,9 @@ class DhtNetwork(object):
         for b in bootstrap:
             n.bootstrap(b[0], b[1])
         time.sleep(.01)
-        p = n.getBound(socket.AF_INET).getPort()
+        p = n.getBoundPort(socket.AF_INET)
         DhtNetwork.Log.log("run_node", ip4, ip6, p, "bootstrap info:", bootstrap)
-        return ((ip4, ip6, p), n, id)
+        return ((ip4, ip6, str(p)), n, id)
 
     @staticmethod
     def find_ip(iface):

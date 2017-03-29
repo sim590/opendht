@@ -333,27 +333,6 @@ cdef class DhtRunner(_WithID):
         return h
     def getNodeId(self):
         return self.thisptr.get().getNodeId().toString()
-    def bootstrap(self, SockAddr addr, done_cb=None):
-        if done_cb:
-            cb_obj = {'done':done_cb}
-            ref.Py_INCREF(cb_obj)
-            self.thisptr.get().bootstrap(addr._addr, cpp.bindDoneCbSimple(done_callback_simple, <void*>cb_obj))
-        else:
-            lock = threading.Condition()
-            pending = 0
-            ok = False
-            def tmp_done(ok_ret):
-                nonlocal pending, ok, lock
-                with lock:
-                    ok = ok_ret
-                    pending -= 1
-                    lock.notify()
-            with lock:
-                pending += 1
-                self.bootstrap(addr, done_cb=tmp_done)
-                while pending > 0:
-                    lock.wait()
-            return ok
     def bootstrap(self, str host, str port=None):
         host_bytes = host.encode()
         port_bytes = port.encode() if port else b'4222'
@@ -381,10 +360,8 @@ cdef class DhtRunner(_WithID):
         cpp.enableFileLogging(self.thisptr.get()[0], path.encode())
     def isRunning(self):
         return self.thisptr.get().isRunning()
-    def getBound(self, cpp.sa_family_t af = 0):
-        s = SockAddr()
-        s._addr = self.thisptr.get().getBound(af)
-        return s
+    def getBoundPort(self, cpp.sa_family_t af = 0):
+        return self.thisptr.get().getBoundPort(af)
     def getStorageLog(self):
         return self.thisptr.get().getStorageLog().decode()
     def getRoutingTablesLog(self, cpp.sa_family_t af):
