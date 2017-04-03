@@ -239,8 +239,9 @@ class PhtTest(FeatureTest):
         @type  opts: dict
         """
         super(PhtTest, self).__init__(test, workbench)
-        self._num_keys = opts['num_keys'] if 'num_keys' in opts else 32
-        self._timer = True if 'timer' in opts else False
+        self._num_keys  = opts['num_keys'] if 'num_keys' in opts else 32
+        self._timer     = True if 'timer' in opts else False
+        self._draw_trie = True if 'draw_trie' in opts else False
 
     def _reset(self):
         super(PhtTest, self)._reset()
@@ -362,7 +363,8 @@ class PhtTest(FeatureTest):
             DhtNetwork.Log.log('All entries under prefix', p, ':')
             for e in all_entries[p]:
                 DhtNetwork.Log.log(e)
-        PhtTest.drawTrie(all_entries)
+        if self._draw_trie:
+            PhtTest.drawTrie(all_entries)
 
 ##################################
 #               DHT              #

@@ -181,12 +181,12 @@ if __name__ == '__main__':
     featureArgs.add_argument('--pht', action='store_true', default=False,
             help='Launches PHT benchmark test. '\
                     'Available args for "-t" are: insert. '\
-                    'Timer available by adding "timer" to "-o" args. '\
+                    'Available options for "-o": are timer, draw_trie. '\
                     'Use "-m" option for fixing number of keys to create during the test.')
     featureArgs.add_argument('--data-persistence', action='store_true', default=0,
             help='Launches data persistence benchmark test. '\
                  'Available args for "-t" are: delete, replace, mult_time. '\
-                 'Available args for "-o" are : dump_str_log, keep_alive, trigger, traffic_plot, op_plot. '\
+                 'Available args for "-o" are: dump_str_log, keep_alive, trigger, traffic_plot, op_plot. '\
                  'Use "-m" to specify the number of producers on the DHT. '\
                  'Use "-e" to specify the number of values to put on the DHT.')
 
